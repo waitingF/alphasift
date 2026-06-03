@@ -12,6 +12,7 @@ from alphasift.config import Config
 from alphasift.candidate_context import collect_candidate_context
 from alphasift.context import build_llm_context
 from alphasift.daily import enrich_daily_features
+from alphasift.dsa_provider import apply_dsa_provider_context
 from alphasift.filter import apply_hard_filters, requires_daily_features, without_daily_filters
 from alphasift.industry import enrich_industry_concepts
 from alphasift.models import Pick, ScreenResult
@@ -45,6 +46,7 @@ def screen(
     daily_enrich_max_candidates: int | None = None,
     deep_analysis: bool = False,
     deep_analysis_max_picks: int | None = None,
+    context: dict[str, object] | None = None,
     config: Config | None = None,
 ) -> ScreenResult:
     """Execute stock screening with the given strategy.
@@ -68,6 +70,8 @@ def screen(
         daily_enrich_max_candidates: Max candidates to enrich after snapshot filtering.
         deep_analysis: Backward-compatible alias for post_analyzers=["dsa"].
         deep_analysis_max_picks: Backward-compatible max-picks alias for DSA.
+        context: Optional host runtime context. DSA may provide LLM settings and
+            callable data providers under context["dsa"].
         config: Runtime config. Defaults to Config.from_env().
 
     Returns:
@@ -233,6 +237,10 @@ def screen(
 
     # 6. Build Pick list
     picks = _df_to_picks(df_top)
+
+    # 6.5. Host-provided candidate context, e.g. DSA realtime quote,
+    # fundamentals, and news. This runs before LLM ranking so L2 can use it.
+    degradation.extend(apply_dsa_provider_context(picks, context))
 
     # 7. L2 LLM ranking
     llm_ranked = False

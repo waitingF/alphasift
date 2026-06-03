@@ -75,6 +75,7 @@ def screen(
         market=market,
         max_output=max_results,
         use_llm=use_llm,
+        context=context,
     )
     picks = [_normalize_pick(item, index + 1) for index, item in enumerate(result.picks)]
     return {
@@ -133,6 +134,9 @@ def _normalize_pick(raw: Any, fallback_rank: int) -> Dict[str, Any]:
         "amount": item.get("amount"),
         "industry": item.get("industry") or "",
         "factor_scores": dict(item.get("factor_scores") or {}),
+        "dsa_context": dict(item.get("dsa_context") or {}),
+        "dsa_news": list(item.get("dsa_news") or []),
+        "dsa_analysis_summary": item.get("dsa_analysis_summary") or "",
         "post_analysis_summaries": dict(item.get("post_analysis_summaries") or {}),
         "post_analysis_tags": list(item.get("post_analysis_tags") or []),
         "raw": item,

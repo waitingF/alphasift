@@ -196,3 +196,32 @@ def test_ranking_prompt_includes_structured_industry_context():
     assert "volume_ratio_20d=1.8" in prompt
     assert "consolidation_days_20d=10" in prompt
     assert "优先参考候选的 industry/concepts" in prompt
+
+
+def test_ranking_prompt_includes_dsa_provider_context():
+    prompt = _build_ranking_prompt(
+        [
+            Pick(
+                rank=1,
+                code="600519",
+                name="贵州茅台",
+                final_score=88,
+                screen_score=88,
+                dsa_context={
+                    "enriched": True,
+                    "quote": {"price": 1688.0, "change_pct": 1.2, "amount": 100_000_000.0},
+                    "fundamentals": {"coverage": {"valuation": "available"}},
+                    "warnings": ["stock_news_slow"],
+                },
+                dsa_news=[{"title": "贵州茅台最新公告"}],
+                dsa_analysis_summary="DSA新闻: 贵州茅台最新公告",
+            )
+        ],
+        hints="demo",
+    )
+
+    assert "dsa_context=" in prompt
+    assert "DSA新闻: 贵州茅台最新公告" in prompt
+    assert "fundamental_coverage=valuation" in prompt
+    assert "news_titles=贵州茅台最新公告" in prompt
+    assert "stock_news_slow" in prompt
