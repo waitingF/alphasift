@@ -148,6 +148,9 @@ class Pick:
     post_analysis_score_deltas: dict[str, float] = field(default_factory=dict)
     post_analysis_results: dict[str, Any] = field(default_factory=dict)
     post_analysis_tags: list[str] = field(default_factory=list)
+    dsa_context: dict[str, Any] = field(default_factory=dict)
+    dsa_news: list[dict[str, Any]] = field(default_factory=list)
+    dsa_analysis_summary: str = ""
     deep_analysis_status: str = "not_requested"
     deep_analysis_query_id: str = ""
     deep_analysis_summary: str = ""

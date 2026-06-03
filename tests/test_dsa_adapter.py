@@ -64,6 +64,13 @@ def test_screen_returns_stable_dsa_contract(monkeypatch):
                     price=1688.0,
                     industry="Baijiu",
                     factor_scores={"value": 88.0, "liquidity": 72.0},
+                    dsa_context={
+                        "enriched": True,
+                        "quote": {"price": 1688.0},
+                        "news": {"results": [{"title": "贵州茅台公告"}]},
+                    },
+                    dsa_news=[{"title": "贵州茅台公告"}],
+                    dsa_analysis_summary="DSA新闻: 贵州茅台公告",
                     post_analysis_summaries={"scorecard": "Local scorecard: value_quality"},
                 )
             ],
@@ -72,9 +79,11 @@ def test_screen_returns_stable_dsa_contract(monkeypatch):
         ),
     )
 
-    payload = dsa_adapter.screen("dual_low", market="cn", max_results=5)
+    context = {"dsa": {"contract_version": "1"}}
+    payload = dsa_adapter.screen("dual_low", market="cn", max_results=5, context=context)
 
     assert calls[0][1]["use_llm"] is True
+    assert calls[0][1]["context"] is context
     assert payload["contract_version"] == "1"
     assert payload["run_id"] == "run123"
     assert payload["llm_ranked"] is True
@@ -90,6 +99,9 @@ def test_screen_returns_stable_dsa_contract(monkeypatch):
     assert payload["candidates"][0]["reason"] == "LLM likes the setup"
     assert payload["candidates"][0]["price"] == 1688.0
     assert payload["candidates"][0]["industry"] == "Baijiu"
+    assert payload["candidates"][0]["dsa_context"]["enriched"] is True
+    assert payload["candidates"][0]["dsa_news"][0]["title"] == "贵州茅台公告"
+    assert payload["candidates"][0]["dsa_analysis_summary"] == "DSA新闻: 贵州茅台公告"
 
 
 def test_status_is_fail_open(monkeypatch):

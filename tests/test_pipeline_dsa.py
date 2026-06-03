@@ -5,6 +5,7 @@ import pytest
 
 from alphasift.config import Config
 from alphasift.pipeline import screen
+from alphasift.ranker import LLMRankingResult
 
 
 def _make_config() -> Config:
@@ -178,3 +179,68 @@ def test_screen_uses_dsa_as_final_stage_overlay(monkeypatch):
     assert [pick.code for pick in result.picks] == ["000001", "000002"]
     assert result.picks[0].rank == 1
     assert result.picks[1].rank == 2
+
+
+def test_screen_applies_dsa_provider_context_before_llm_ranking(monkeypatch):
+    config = _make_config()
+    config.llm_api_key = "test-key"
+
+    df = pd.DataFrame(
+        [
+            {
+                "code": "600519",
+                "name": "贵州茅台",
+                "price": 10.0,
+                "change_pct": 1.0,
+                "amount": 200_000_000,
+                "total_mv": 10_000_000_000,
+                "pe_ratio": 10.0,
+                "pb_ratio": 1.0,
+                "screen_score": 88.0,
+            }
+        ]
+    )
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("alphasift.pipeline.fetch_snapshot_with_fallback", lambda sources, **kwargs: df)
+    monkeypatch.setattr("alphasift.pipeline.apply_hard_filters", lambda frame, filters: frame)
+    monkeypatch.setattr("alphasift.pipeline.compute_screen_scores", lambda frame, cfg: frame)
+
+    def fake_ranker(picks, *_args, **_kwargs):
+        captured["dsa_context"] = picks[0].dsa_context
+        captured["dsa_news"] = picks[0].dsa_news
+        captured["dsa_summary"] = picks[0].dsa_analysis_summary
+        picks[0].llm_score = 90.0
+        return LLMRankingResult(picks=picks, ranked=True, coverage=1.0)
+
+    monkeypatch.setattr("alphasift.pipeline.rank_candidates_with_metadata", fake_ranker)
+
+    def get_candidate_context(stock_code: str, stock_name: str = ""):
+        assert stock_code == "600519"
+        assert stock_name == "贵州茅台"
+        return {
+            "enriched": True,
+            "quote": {"price": 1688.0, "change_pct": 1.2, "amount": 100_000_000.0},
+            "fundamentals": {"coverage": {"valuation": "available"}},
+            "news": {
+                "success": True,
+                "results": [{"title": "贵州茅台最新公告", "source": "测试源"}],
+            },
+            "warnings": [],
+        }
+
+    result = screen(
+        "dual_low",
+        max_output=1,
+        use_llm=True,
+        context={"dsa": {"get_candidate_context": get_candidate_context}},
+        config=config,
+    )
+
+    assert captured["dsa_context"]["enriched"] is True
+    assert captured["dsa_news"][0]["title"] == "贵州茅台最新公告"
+    assert "DSA新闻" in captured["dsa_summary"]
+    assert result.llm_ranked is True
+    assert result.picks[0].dsa_context["quote"]["price"] == 1688.0
+    assert any("DSA provider context applied 1 of 1 candidates" in item for item in result.degradation)

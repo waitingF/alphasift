@@ -163,33 +163,12 @@ def rank_candidates_with_metadata(
 
 
 def _build_ranking_prompt(candidates: list[Pick], hints: str, context: str = "") -> str:
-    candidates_text = "\n".join(
-        f"- {p.code} {p.name}: price={p.price}, change_pct={p.change_pct}%, "
-        f"amount={p.amount:.0f}, turnover={p.turnover_rate}, volume_ratio={p.volume_ratio}, "
-        f"total_mv={p.total_mv}, PE={p.pe_ratio}, PB={p.pb_ratio}, "
-        f"industry={p.industry or 'unknown'}, concepts={p.concepts or 'unknown'}, "
-        f"industry_rank={p.industry_rank}, industry_change_pct={p.industry_change_pct}, "
-        f"board_heat_score={p.board_heat_score}, board_heat_summary={p.board_heat_summary or 'unknown'}, "
-        f"board_heat_latest_score={p.board_heat_latest_score}, "
-        f"board_heat_trend_score={p.board_heat_trend_score}, "
-        f"board_heat_persistence_score={p.board_heat_persistence_score}, "
-        f"board_heat_cooling_score={p.board_heat_cooling_score}, "
-        f"board_heat_observations={p.board_heat_observations}, "
-        f"board_heat_state={p.board_heat_state or 'unknown'}, "
-        f"change_60d={p.change_60d}, signal_score={p.signal_score}, "
-        f"macd={p.macd_status}, rsi={p.rsi_status}, "
-        f"breakout_20d_pct={p.breakout_20d_pct}, range_20d_pct={p.range_20d_pct}, "
-        f"volume_ratio_20d={p.volume_ratio_20d}, body_pct={p.body_pct}, "
-        f"pullback_to_ma20_pct={p.pullback_to_ma20_pct}, "
-        f"consolidation_days_20d={p.consolidation_days_20d}, "
-        f"screen_score={p.screen_score:.1f}, factor_scores={p.factor_scores}"
-        for p in candidates
-    )
+    candidates_text = "\n".join(_format_candidate_for_prompt(p) for p in candidates)
     return f"""你是一个专业的股票研究员，任务是在“已经由代码硬筛过”的候选池内做相对排序。
 你不能推荐候选池外股票，不能修改硬筛条件，不能给目标价或承诺收益。你的价值在于：
 1. 结合策略偏好，对候选之间做跨股票比较；
 2. 识别结构化数据暴露不出的潜在催化、风格匹配和风险点；
-3. 对行业/概念热度做语义归因，但不能把单日热度当作唯一买入理由；
+3. 对行业/概念热度和 DSA 补充的行情、基本面、新闻做语义归因，但不能把单日热度当作唯一买入理由；
 4. 给出简短、可审计、可复核的排序理由。
 
 ## 排序依据
@@ -228,6 +207,85 @@ def _build_ranking_prompt(candidates: list[Pick], hints: str, context: str = "")
   ]
 }}
 """
+
+
+def _format_candidate_for_prompt(p: Pick) -> str:
+    return (
+        f"- {p.code} {p.name}: price={p.price}, change_pct={p.change_pct}%, "
+        f"amount={p.amount:.0f}, turnover={p.turnover_rate}, volume_ratio={p.volume_ratio}, "
+        f"total_mv={p.total_mv}, PE={p.pe_ratio}, PB={p.pb_ratio}, "
+        f"industry={p.industry or 'unknown'}, concepts={p.concepts or 'unknown'}, "
+        f"industry_rank={p.industry_rank}, industry_change_pct={p.industry_change_pct}, "
+        f"board_heat_score={p.board_heat_score}, board_heat_summary={p.board_heat_summary or 'unknown'}, "
+        f"board_heat_latest_score={p.board_heat_latest_score}, "
+        f"board_heat_trend_score={p.board_heat_trend_score}, "
+        f"board_heat_persistence_score={p.board_heat_persistence_score}, "
+        f"board_heat_cooling_score={p.board_heat_cooling_score}, "
+        f"board_heat_observations={p.board_heat_observations}, "
+        f"board_heat_state={p.board_heat_state or 'unknown'}, "
+        f"change_60d={p.change_60d}, signal_score={p.signal_score}, "
+        f"macd={p.macd_status}, rsi={p.rsi_status}, "
+        f"breakout_20d_pct={p.breakout_20d_pct}, range_20d_pct={p.range_20d_pct}, "
+        f"volume_ratio_20d={p.volume_ratio_20d}, body_pct={p.body_pct}, "
+        f"pullback_to_ma20_pct={p.pullback_to_ma20_pct}, "
+        f"consolidation_days_20d={p.consolidation_days_20d}, "
+        f"screen_score={p.screen_score:.1f}, factor_scores={p.factor_scores}, "
+        f"dsa_context={_format_dsa_context_for_prompt(p)}"
+    )
+
+
+def _format_dsa_context_for_prompt(p: Pick) -> str:
+    parts: list[str] = []
+    if p.dsa_analysis_summary:
+        parts.append(f"summary={_truncate_text(p.dsa_analysis_summary, 240)}")
+
+    context = p.dsa_context if isinstance(p.dsa_context, dict) else {}
+    quote = context.get("quote") if isinstance(context.get("quote"), dict) else {}
+    if quote:
+        parts.append(
+            "quote="
+            f"price:{quote.get('price')},change_pct:{quote.get('change_pct')},"
+            f"amount:{quote.get('amount')}"
+        )
+
+    fundamentals = context.get("fundamentals") if isinstance(context.get("fundamentals"), dict) else {}
+    coverage = fundamentals.get("coverage") if isinstance(fundamentals.get("coverage"), dict) else {}
+    if coverage:
+        available = [
+            str(key)
+            for key, value in coverage.items()
+            if str(value).lower() in {"available", "partial"}
+        ]
+        if available:
+            parts.append(f"fundamental_coverage={','.join(available[:5])}")
+
+    news_items = p.dsa_news
+    if not news_items:
+        news_payload = context.get("news") if isinstance(context.get("news"), dict) else {}
+        raw_results = news_payload.get("results") if isinstance(news_payload, dict) else []
+        if isinstance(raw_results, list):
+            news_items = [item for item in raw_results if isinstance(item, dict)]
+    titles = [
+        _truncate_text(str(item.get("title") or "").strip(), 80)
+        for item in news_items[:3]
+        if isinstance(item, dict) and item.get("title")
+    ]
+    if titles:
+        parts.append(f"news_titles={';'.join(titles)}")
+
+    warnings = context.get("warnings") if isinstance(context.get("warnings"), list) else []
+    warning_text = [str(item) for item in warnings[:3] if item]
+    if warning_text:
+        parts.append(f"warnings={';'.join(warning_text)}")
+
+    return "; ".join(parts) if parts else "none"
+
+
+def _truncate_text(value: str, limit: int) -> str:
+    text = " ".join(value.split())
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)] + "…"
 
 
 def _call_llm(
