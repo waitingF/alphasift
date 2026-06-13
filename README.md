@@ -67,9 +67,44 @@ alphasift screen dual_low --no-post-analysis
 alphasift audit
 ```
 
-Example quickstart output:
+Example output shape:
 
-<img src="docs/screenshots/quickstart.svg" alt="AlphaSift quickstart terminal output" width="900">
+```text
+$ alphasift screen dual_low --no-llm
+Universe 5190 -> filtered 337 -> output Top 5
+rank  code    name       score  price   change   pe     pb
+1     002039  黔源电力   72.7   20.72   -2.49%   14.76  1.99
+2     002444  巨星科技   71.0   30.82   +0.29%   14.59  1.95
+3     002128  电投能源   70.9   31.60   -2.41%   14.00  1.90
+```
+
+## Screening examples
+
+The following recorded examples were run on April 12, 2026, using the previous trading day's A-share close data from April 10, 2026. LLM ranking was disabled with `--no-llm`; these rows are examples of engine output, not recommendations.
+
+### Dual Low
+
+Full market 5190 stocks -> 337 after hard filters -> Top 5 output.
+
+| Rank | Code | Name | Score | Price | Change | PE | PB |
+|---:|---|---|---:|---:|---:|---:|---:|
+| 1 | 002039 | 黔源电力 | 72.7 | 20.72 | -2.49% | 14.76 | 1.99 |
+| 2 | 002444 | 巨星科技 | 71.0 | 30.82 | +0.29% | 14.59 | 1.95 |
+| 3 | 002128 | 电投能源 | 70.9 | 31.60 | -2.41% | 14.00 | 1.90 |
+| 4 | 002236 | 大华股份 | 70.8 | 17.43 | +1.04% | 14.86 | 1.50 |
+| 5 | 600583 | 海油工程 | 68.9 | 7.02 | +4.15% | 14.89 | 1.17 |
+
+### Volume Breakout
+
+Full market 5190 stocks -> 126 after hard filters -> Top 5 output.
+
+| Rank | Code | Name | Score | Price | Change |
+|---:|---|---|---:|---:|---:|
+| 1 | 002837 | 英维克 | 74.0 | 99.05 | +6.40% |
+| 2 | 688183 | 生益电子 | 73.8 | 95.30 | +7.09% |
+| 3 | 300803 | 指南针 | 73.3 | 101.68 | +3.07% |
+| 4 | 002384 | 东山精密 | 73.0 | 143.55 | +8.83% |
+| 5 | 300277 | 汽轮科技 | 73.0 | 19.74 | +5.73% |
 
 ## Hotspot workflow
 
@@ -214,7 +249,6 @@ alphasift/
 ├── README.zh-CN.md          # Chinese README
 ├── strategies/              # Strategy YAML files
 ├── docs/
-│   ├── screenshots/         # README screenshots
 │   ├── configuration.md     # Configuration reference
 │   ├── design.md            # Design principles
 │   ├── positioning.md       # Product positioning
@@ -265,9 +299,12 @@ alphasift/
 
 ## Verification
 
-The current documentation update was validated against the real test suite output below:
+Last recorded full-suite check:
 
-<img src="docs/screenshots/test-run.svg" alt="AlphaSift real pytest run output" width="900">
+```text
+$ python -m pytest -q
+176 passed, 1 skipped in 1.56s
+```
 
 ## Documentation
 
