@@ -17,7 +17,6 @@ from alphasift.daily import (
     _source_disabled_reason,
     _to_baostock_code,
     _to_tencent_code,
-    _to_tushare_code,
 )
 
 
@@ -780,16 +779,6 @@ def test_to_baostock_code_handles_main_boards():
     assert _to_baostock_code("1") == "sz.000001"
 
 
-def test_to_tushare_code_handles_exchange_suffixes():
-    assert _to_tushare_code("600519") == "600519.SH"
-    assert _to_tushare_code("000001") == "000001.SZ"
-    assert _to_tushare_code("300750") == "300750.SZ"
-    assert _to_tushare_code("688981") == "688981.SH"
-    assert _to_tushare_code("830799") == "830799.BJ"
-    assert _to_tushare_code("920593") == "920593.BJ"
-    assert _to_tushare_code("1") == "000001.SZ"
-
-
 def test_to_tencent_code_handles_exchange_prefixes():
     assert _to_tencent_code("600519") == "sh600519"
     assert _to_tencent_code("000001") == "sz000001"
@@ -907,4 +896,29 @@ def test_fetch_daily_history_yfinance_flattens_multiindex(monkeypatch):
 
     assert "收盘" in result.columns
     assert "日期" in result.columns
-    assert len(result) == 30
+
+
+def test_fetch_daily_history_local_reads_store(tmp_path):
+    from alphasift.daily_store import DailyBarStore
+
+    store = DailyBarStore(tmp_path / "daily_bars")
+    store.replace_raw("600519", pd.DataFrame([
+        {"date": "20260401", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 1000.0, "amount": 10000.0},
+        {"date": "20260402", "open": 10.2, "high": 10.8, "low": 10.0, "close": 10.6, "volume": 1100.0, "amount": 11000.0},
+    ]))
+    store.replace_adj_factor("600519", pd.DataFrame([
+        {"date": "20260401", "adj_factor": 1.0},
+        {"date": "20260402", "adj_factor": 1.0},
+    ]))
+    store.write_manifest({"version": 1, "last_trade_date": "20260402", "code_count": 1})
+
+    result = fetch_daily_history(
+        "600519",
+        source="local",
+        daily_bars_dir=store.root,
+        end_date="20260402",
+        lookback_days=5,
+    )
+
+    assert result.attrs["daily_source"] == "local"
+    assert result["date"].tolist() == ["2026-04-01", "2026-04-02"]

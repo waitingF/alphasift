@@ -75,6 +75,15 @@ def _audit_strategy(strategy) -> list[dict[str, str]]:
             "recommendation": "补充 require_ma_bullish、price_above_ma20、change_60d 或更严格的形态特征。",
         })
 
+    if uses_daily:
+        findings.append({
+            "severity": "info",
+            "strategy": strategy.name,
+            "area": "daily_enrich",
+            "message": "策略依赖日 K 硬条件；默认仅对 Top N 候选做日 K 增强。",
+            "recommendation": "启用 DAILY_ENRICH_FULL_POOL=true 且 DAILY_SOURCE=local 可对快照筛后全量做日 K 硬筛。",
+        })
+
     if not screening.ranking_hints.strip():
         findings.append({
             "severity": "warn",

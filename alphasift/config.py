@@ -220,6 +220,15 @@ class Config:
     daily_fetch_max_workers: int = 1
     daily_history_cache_dir: Path | None = None
     daily_history_cache_ttl_hours: int = 24
+    daily_enrich_full_pool: bool = False
+    daily_bars_dir: Path | None = None
+    daily_local_fallback_live: bool = False
+    daily_full_pool_warn_threshold: int = 500
+    daily_sync_requests_per_second: float = 2.0
+    daily_sync_retry: int = 3
+    daily_sync_retry_interval: float = 1.0
+    daily_sync_progress_save_every: int = 50
+    daily_sync_progress_save_interval: float = 15.0
 
     # Independent risk layer.
     risk_enabled: bool = True
@@ -359,6 +368,33 @@ class Config:
                         os.getenv("DAILY_HISTORY_CACHE_TTL_HOURS", "24"),
                     )
                 ),
+            ),
+            daily_enrich_full_pool=_parse_bool_env("DAILY_ENRICH_FULL_POOL", False),
+            daily_bars_dir=(
+                _parse_optional_path_env("DAILY_BARS_DIR")
+                or data_dir / "daily_bars"
+            ),
+            daily_local_fallback_live=_parse_bool_env("DAILY_LOCAL_FALLBACK_LIVE", False),
+            daily_full_pool_warn_threshold=max(
+                1,
+                int(os.getenv("DAILY_FULL_POOL_WARN_THRESHOLD", "500")),
+            ),
+            daily_sync_requests_per_second=max(
+                0.0,
+                _parse_float_env("DAILY_SYNC_REQUESTS_PER_SECOND", 2.0),
+            ),
+            daily_sync_retry=max(0, int(os.getenv("DAILY_SYNC_RETRY", "3"))),
+            daily_sync_retry_interval=max(
+                0.0,
+                _parse_float_env("DAILY_SYNC_RETRY_INTERVAL", 1.0),
+            ),
+            daily_sync_progress_save_every=max(
+                1,
+                int(os.getenv("DAILY_SYNC_PROGRESS_SAVE_EVERY", "50")),
+            ),
+            daily_sync_progress_save_interval=max(
+                1.0,
+                _parse_float_env("DAILY_SYNC_PROGRESS_SAVE_INTERVAL", 15.0),
             ),
             risk_enabled=_parse_bool_env("RISK_ENABLED", True),
             risk_max_penalty=_parse_float_env("RISK_MAX_PENALTY", 12.0),

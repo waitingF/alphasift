@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+daily-store = ["pyarrow>=14.0", "tqdm>=4.66"]
 
 [project.scripts]
 alphasift = "alphasift.cli:main"

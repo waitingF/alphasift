@@ -8,3 +8,6 @@ data/
 *.log
 .venv/
 local/
+.DS_Store
+.idea
+.cursor

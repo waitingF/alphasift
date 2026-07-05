@@ -252,3 +252,75 @@ def test_cli_hotspot_cache_does_not_overwrite_non_empty_cache_with_empty_provide
     assert metadata["fallback_used"] is True
     assert metadata["history_appended"] is False
     assert metadata["rows"] == 1
+
+
+def test_daily_bars_status_cli(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "daily_bars"
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps({
+        "version": 1,
+        "last_trade_date": "20260403",
+        "code_count": 1,
+    }), encoding="utf-8")
+    monkeypatch.setenv("DAILY_BARS_DIR", str(root))
+    monkeypatch.setattr(sys, "argv", ["alphasift", "daily-bars", "status"])
+
+    main()
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["last_trade_date"] == "20260403"
+
+
+def test_daily_bars_status_explain_shows_in_progress(tmp_path, monkeypatch, capsys):
+    root = tmp_path / "daily_bars"
+    meta = root / "meta"
+    meta.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({
+        "version": 1,
+        "last_trade_date": "20260403",
+        "code_count": 10,
+    }), encoding="utf-8")
+    (meta / "sync_progress.json").write_text(json.dumps({
+        "signature": {"command": "init", "lookback_days": 800, "end_date": "20260403"},
+        "next_index": 100,
+        "symbols": ["600519.SH"] * 200,
+        "updated": 95,
+        "skipped": 3,
+        "failed": 2,
+        "last_symbol": "600519.SH",
+        "errors": [],
+        "api_stats": {"attempts": 300, "retries": 1, "failures": 0},
+    }), encoding="utf-8")
+    monkeypatch.setenv("DAILY_BARS_DIR", str(root))
+    monkeypatch.setattr(sys, "argv", ["alphasift", "daily-bars", "status", "--explain"])
+
+    main()
+
+    out = capsys.readouterr().out
+    assert "in_progress: 100/200" in out
+    assert "progress_file=" in out
+
+
+def test_screen_daily_enrich_full_pool_flag(monkeypatch, capsys):
+    captured = {}
+
+    def fake_screen(*args, **kwargs):
+        captured.update(kwargs)
+        from alphasift.models import ScreenResult
+        return ScreenResult(strategy="shrink_pullback", market="cn")
+
+    monkeypatch.setattr("alphasift.cli.screen", fake_screen)
+    monkeypatch.setattr(sys, "argv", [
+        "alphasift",
+        "screen",
+        "shrink_pullback",
+        "--no-llm",
+        "--daily-enrich-full-pool",
+        "--daily-source",
+        "local",
+    ])
+
+    main()
+
+    assert captured["daily_enrich_full_pool"] is True
+    assert captured["daily_source"] == "local"

@@ -140,6 +140,17 @@ def main():
         default=None,
         help="日 K 增强最多处理的候选数",
     )
+    sp.add_argument(
+        "--daily-enrich-full-pool",
+        action="store_true",
+        default=None,
+        help="含日 K 硬条件时对快照筛后全量候选做日 K 增强与硬筛",
+    )
+    sp.add_argument(
+        "--daily-source",
+        default=None,
+        help="日 K 数据源，例如 local、tushare、auto",
+    )
     sp.add_argument("--save-run", action="store_true", help="保存本次运行到 ALPHASIFT_DATA_DIR/runs")
     sp.add_argument("--output", default=None, help="额外写出结果到指定路径")
     sp.add_argument("--jsonl", action="store_true", help="以 JSONL 输出")
@@ -218,6 +229,31 @@ def main():
     ap = sub.add_parser("audit", help="评估项目能力、策略配置覆盖和已知短板")
     ap.add_argument("--json", action="store_true", help="以 JSON 输出")
 
+    # daily-bars
+    db = sub.add_parser("daily-bars", help="本地 Tushare 日 K 库管理")
+    db_sub = db.add_subparsers(dest="daily_bars_command", required=True)
+    db_init = db_sub.add_parser("init", help="初始化全 A 股日 K 库")
+    db_init.add_argument("--lookback-days", type=int, default=800)
+    db_init.add_argument("--max-codes", type=int, default=None)
+    db_init.add_argument("--workers", type=int, default=4)
+    db_init.add_argument("--include-st", action="store_true")
+    db_init.add_argument("--requests-per-second", type=float, default=None)
+    db_init.add_argument("--reset-progress", action="store_true")
+    db_init.add_argument(
+        "--quiet",
+        action="store_true",
+        help="关闭 tqdm 进度条",
+    )
+    db_sync = db_sub.add_parser("sync", help="增量同步到最新交易日")
+    db_sync.add_argument("--requests-per-second", type=float, default=None)
+    db_sync.add_argument("--include-st", action="store_true")
+    db_status = db_sub.add_parser("status", help="检查本地库状态")
+    db_status.add_argument("--explain", action="store_true", help="输出紧凑可读摘要")
+    db_fetch = db_sub.add_parser("fetch", help="补洞单票或少量代码")
+    db_fetch.add_argument("codes", nargs="+")
+    db_fetch.add_argument("--lookback-days", type=int, default=120)
+    db_fetch.add_argument("--requests-per-second", type=float, default=None)
+
     # quickstart
     qp = sub.add_parser(
         "quickstart",
@@ -255,6 +291,8 @@ def main():
             post_analysis_max_picks=args.post_analysis_max_picks,
             daily_enrich=args.daily_enrich,
             daily_enrich_max_candidates=args.daily_enrich_max_candidates,
+            daily_enrich_full_pool=args.daily_enrich_full_pool,
+            daily_source=args.daily_source,
             deep_analysis=args.deep_analysis,
             deep_analysis_max_picks=args.deep_analysis_max_picks,
             config=config,
@@ -457,6 +495,12 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             print(_format_audit_explain(result))
+
+    elif args.command == "daily-bars":
+        config = Config.from_env()
+        exit_code = _run_daily_bars_command(args, config)
+        if exit_code:
+            sys.exit(exit_code)
 
     elif args.command == "quickstart":
         _run_quickstart(strategy=args.strategy, max_output=args.max_output)
@@ -900,6 +944,116 @@ def _safe_float(value: object) -> float | None:
         return float(text)
     except (TypeError, ValueError):
         return None
+
+
+def _format_daily_bars_status_explain(summary: dict[str, object]) -> str:
+    lines = [
+        f"root={summary.get('root')}",
+        f"last_trade_date={summary.get('last_trade_date') or '-'}",
+        f"code_count={summary.get('code_count', 0)} raw_files={summary.get('raw_file_count', 0)}",
+    ]
+    if summary.get("stale_vs_effective"):
+        lines.append(
+            "stale: local store is behind effective trade date "
+            f"({summary.get('last_trade_date')} < {summary.get('effective_trade_date')})"
+        )
+    if summary.get("ahead_of_effective"):
+        lines.append("ahead: local store is newer than snapshot effective trade date")
+    in_progress = summary.get("in_progress")
+    if isinstance(in_progress, dict) and in_progress:
+        lines.append(
+            "in_progress: "
+            f"{in_progress.get('next_index')}/{in_progress.get('total_symbols')} "
+            f"({in_progress.get('percent_complete')}%) "
+            f"updated={in_progress.get('updated')} skipped={in_progress.get('skipped')} "
+            f"failed={in_progress.get('failed')} last={in_progress.get('last_symbol')}"
+        )
+        lines.append(f"progress_file={in_progress.get('path')}")
+    manifest_error = summary.get("manifest_error")
+    if manifest_error:
+        lines.append(f"manifest_error={manifest_error}")
+    failed = summary.get("failed_codes") or []
+    if failed:
+        lines.append(f"failed_codes={len(failed)} sample={failed[:5]}")
+    return "\n".join(lines)
+
+
+def _run_daily_bars_command(args, config: Config) -> int:
+    import os
+
+    from alphasift.daily_store import DailyBarStore
+    from alphasift.daily_sync import fetch_daily_bars, init_daily_bars, status_daily_bars, sync_daily_bars
+
+    token = os.getenv("TUSHARE_TOKEN", "").strip() or os.getenv("TUSHARE_API_TOKEN", "").strip()
+    store = DailyBarStore(config.daily_bars_dir, adj=os.getenv("TUSHARE_DAILY_ADJ", "qfq"))
+    rps = (
+        args.requests_per_second
+        if getattr(args, "requests_per_second", None) is not None
+        else config.daily_sync_requests_per_second
+    )
+
+    if args.daily_bars_command == "status":
+        effective = os.getenv("TUSHARE_TRADE_DATE", "").strip() or None
+        summary = status_daily_bars(store, effective_trade_date=effective)
+        if getattr(args, "explain", False):
+            print(_format_daily_bars_status_explain(summary))
+        else:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+
+    if not token:
+        print("TUSHARE_TOKEN is required for daily-bars init/sync/fetch", file=sys.stderr)
+        return 1
+
+    if args.daily_bars_command == "init":
+        stats = init_daily_bars(
+            store,
+            token=token,
+            lookback_days=args.lookback_days,
+            max_codes=args.max_codes,
+            workers=args.workers,
+            include_st=args.include_st,
+            requests_per_second=rps,
+            retry=config.daily_sync_retry,
+            retry_interval=config.daily_sync_retry_interval,
+            save_every=config.daily_sync_progress_save_every,
+            save_interval=config.daily_sync_progress_save_interval,
+            reset_progress=args.reset_progress,
+            show_progress=not getattr(args, "quiet", False),
+        )
+    elif args.daily_bars_command == "sync":
+        stats = sync_daily_bars(
+            store,
+            token=token,
+            requests_per_second=rps,
+            retry=config.daily_sync_retry,
+            retry_interval=config.daily_sync_retry_interval,
+            include_st=args.include_st,
+        )
+    elif args.daily_bars_command == "fetch":
+        stats = fetch_daily_bars(
+            store,
+            args.codes,
+            token=token,
+            lookback_days=args.lookback_days,
+            requests_per_second=rps,
+            retry=config.daily_sync_retry,
+            retry_interval=config.daily_sync_retry_interval,
+        )
+    else:
+        return 1
+
+    print(json.dumps({
+        "added_rows": stats.added_rows,
+        "updated_codes": stats.updated_codes,
+        "rebuilt_codes": stats.rebuilt_codes,
+        "failed_codes": stats.failed_codes,
+        "source_errors": stats.source_errors,
+        "api_attempts": stats.api_attempts,
+        "api_retries": stats.api_retries,
+        "api_failures": stats.api_failures,
+    }, ensure_ascii=False, indent=2))
+    return 1 if stats.failed_codes or stats.source_errors else 0
 
 
 def _apply_env_file_args(env_files: list[str] | None) -> None:

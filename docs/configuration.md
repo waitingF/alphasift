@@ -89,6 +89,21 @@ TUSHARE_TOKEN=...
 | `ALPHASIFT_DATA_DIR` | 否 | 运行记录和评估结果目录 | `./data` |
 | `STRATEGIES_DIR` | 否 | 策略目录路径 | 自动查找 |
 
+## 方案 C：全量日 K 硬筛（规划中）
+
+若你已用 Tushare 预下载全量 A 股日 K，并希望对含日 K 硬条件的策略在快照筛后**全量**做日 K 硬筛（去掉 Top N 截断），详见实现方案：
+
+- [docs/plans/2026-06-26-full-daily-k-hard-filter.md](plans/2026-06-26-full-daily-k-hard-filter.md)
+
+规划中的主要配置项（实现后生效）：
+
+| 变量 | 说明 |
+|------|------|
+| `DAILY_ENRICH_FULL_POOL` | 含日 K 硬条件时，对快照筛后全部候选做日 K 增强与硬筛 |
+| `DAILY_BARS_DIR` | 本地 Tushare 日 K 库根目录（Parquet） |
+| `DAILY_SOURCE=local` | screen 从本地库读日 K，不打在线 API |
+| `alphasift daily-bars init/sync` | 离线初始化与增量同步 CLI |
+
 ## LiteLLM 配置兼容
 
 AlphaSift 兼容 `daily_stock_analysis` 的 LiteLLM 配置习惯：

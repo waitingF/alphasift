@@ -158,7 +158,10 @@ $ alphasift screen dual_low --no-llm
 | `DAILY_ENRICH_ENABLED` | 否 | 是否默认对 L1 后 Top N 候选补充日 K 特征 | `false` |
 | `DAILY_ENRICH_MAX_CANDIDATES` | 否 | 日 K 增强最多处理候选数 | `100` |
 | `DAILY_LOOKBACK_DAYS` | 否 | 日 K 特征回看天数 | `120` |
-| `DAILY_SOURCE` | 否 | 日 K 数据源：`akshare`、`baostock`、`tushare` 或 `auto`；有 Tushare token 时 `auto` 优先用 `tushare` | `akshare` |
+| `DAILY_SOURCE` | 否 | 日 K 数据源：`local`、`akshare`、`baostock`、`tushare` 或 `auto` | `auto` |
+| `DAILY_BARS_DIR` | 否 | 本地 Tushare 日 K Parquet 库目录 | `${ALPHASIFT_DATA_DIR}/daily_bars` |
+| `DAILY_ENRICH_FULL_POOL` | 否 | 含日 K 硬条件时，对快照筛后全量候选做日 K 增强与硬筛 | `false` |
+| `DAILY_SYNC_REQUESTS_PER_SECOND` | 否 | `daily-bars init/sync` API 限速 | `2.0` |
 | `DAILY_FETCH_RETRIES` | 否 | 单只候选日 K 拉取失败后的重试次数 | `2` |
 | `DAILY_FETCH_MAX_WORKERS` | 否 | 日 K 拉取并发数，网络不稳时建议 `1`，稳定后可设 `2`/`4` | `1` |
 | `RISK_ENABLED` | 否 | 是否启用独立风险层 | `true` |
@@ -249,7 +252,7 @@ alphasift/
 - **组合分散覆盖层**：LLM 标注行业/主题后，默认按行业风险桶对重复候选做温和扣分；若 LLM 缺失行业标签但候选有 `industry`，会用结构化行业作后备锚点
 - **LiteLLM 配置复用**：兼容主模型、fallback、多渠道和 Router YAML，方便复用作者其他项目配置
 - **独立风险层**：在 LLM 后对过热、弱信号、低置信度等风险做统一扣分或剔除
-- **候选级日 K 增强**：只对 L1 后 Top N 候选补充 MA、60 日涨幅、MACD/RSI、signal_score、20 日突破幅度、区间振幅、20 日量能比、实体强度、MA20 回踩距离和平台持续天数；`DAILY_SOURCE=auto` 且配置了 Tushare token 时会先试 `tushare`，否则走 `akshare`，失败后降级到 `baostock`
+- **候选级日 K 增强**：默认只对 L1 后 Top N 候选补充 MA、60 日涨幅、MACD/RSI、signal_score 等；启用 `DAILY_ENRICH_FULL_POOL=true` + `DAILY_SOURCE=local` 时，对快照硬筛后**全部**候选做日 K 硬筛（方案 C，详见 [docs/plans/2026-06-26-full-daily-k-hard-filter.md](docs/plans/2026-06-26-full-daily-k-hard-filter.md)）
 - **默认 L3 评分器**：本地 `scorecard` 默认启用，作为最终候选的轻量一致性复核
 - **可评估闭环**：保存运行结果，用后续最新快照做 T+N 收益、胜率、缺失报价、交易成本扣减、等权组合摘要和形态后验标签统计；可选抓取日 K 路径计算最大回撤和最大浮盈
 - **DSA 后置增强**：DSA 只是一种可追加 L3 分析器，不参与全市场初筛，也不是默认依赖
@@ -295,6 +298,52 @@ tushare → efinance → akshare_em → em_datacenter
 
 > 周末/节假日 push2 接口不可用，会自动降级到 em_datacenter。若某个数据源缺少当前策略必需字段，例如 PB，系统会跳过该源继续尝试后续来源。
 
+## 离线日 K 库（方案 C）
+
+含日 K 硬条件的策略（如 `shrink_pullback`、`volume_breakout`）默认只对快照排序后的 Top N（100 只）做日 K 增强，可能漏掉排名靠后但形态更好的候选。若已有 Tushare Pro，可预先同步全 A 股日 K 到本地 Parquet 库，并在 screen 时对快照筛后**全量**候选做日 K 硬筛。
+
+### 1. 安装可选依赖
+
+```bash
+pip install "alphasift[daily-store]"
+```
+
+### 2. 初始化与增量同步
+
+```bash
+export TUSHARE_TOKEN=your_token
+export TUSHARE_DAILY_ADJ=qfq
+
+# 首次：下载全 A 股最近约 800 自然日窗口（可用 --max-codes 调试）
+alphasift daily-bars init --lookback-days 800
+
+# 每个交易日收盘后增量
+alphasift daily-bars sync
+
+# 检查库状态
+alphasift daily-bars status
+
+# 单票补洞
+alphasift daily-bars fetch 600519 000001 --lookback-days 120
+```
+
+库默认落在 `${ALPHASIFT_DATA_DIR}/daily_bars`，可用 `DAILY_BARS_DIR` 覆盖。init 支持 `--workers 4` 并行拉取（与 `DAILY_SYNC_REQUESTS_PER_SECOND` 全局限速配合使用）。
+
+**进度查看：** init 默认显示 **tqdm 单行进度条**（`ok/skip/fail/last`）；加 `--quiet` 可关闭。另开终端可运行 `alphasift daily-bars status --explain` 或查看 `${DAILY_BARS_DIR}/meta/sync_progress.json`。
+
+### 3. 全量日 K 硬筛选股
+
+```bash
+export DAILY_ENRICH_FULL_POOL=true
+export DAILY_SOURCE=local
+export DAILY_BARS_DIR=./data/daily_bars
+
+alphasift screen shrink_pullback --no-llm --explain \
+  --daily-enrich-full-pool --daily-source local
+```
+
+更多配置见 [docs/configuration.md](docs/configuration.md) 与 [docs/plans/2026-06-26-full-daily-k-hard-filter.md](docs/plans/2026-06-26-full-daily-k-hard-filter.md)。
+
 ## 内置策略
 
 | 策略 | 类型 | 说明 |
@@ -314,7 +363,7 @@ tushare → efinance → akshare_em → em_datacenter
 
 ## 已知限制
 
-- 依赖日 K 的策略只对 L1 后 Top N 候选做增强；这不是完整历史数据库或全市场回测系统
+- 依赖日 K 的策略默认只对 L1 后 Top N 候选做增强；启用 `DAILY_ENRICH_FULL_POOL=true` + `DAILY_SOURCE=local` 后可对快照筛后全量做日 K 硬筛
 - `dsa` 后置分析器依赖外部 `daily_stock_analysis` 服务，当前按同步 REST 请求逐只调用，更适合最终名单的低频深度分析
 - L1/L2 主评分仍以快照横截面数据为主；任意 L3 后置分析器都只在最终阶段做覆盖和分数修正，不参与全市场初筛
 - `tushare` 兜底源依赖用户自己的 Pro token、接口积分和权限；当前取最近交易日收盘数据，不提供实时盘口

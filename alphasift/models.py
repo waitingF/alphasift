@@ -198,6 +198,10 @@ class ScreenResult:
     post_analyzers: list[str] = field(default_factory=list)
     daily_enriched: bool = False
     daily_enrich_count: int = 0
+    daily_enrich_mode: str = ""
+    daily_full_pool: bool = False
+    daily_store_last_trade_date: str | None = None
+    daily_effective_trade_date: str | None = None
     risk_enabled: bool = True
     portfolio_diversity_enabled: bool = True
     portfolio_concentration_notes: list[str] = field(default_factory=list)

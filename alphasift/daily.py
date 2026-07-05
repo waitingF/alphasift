@@ -15,6 +15,9 @@ import time
 import pandas as pd
 import requests
 
+from alphasift.daily_adjust import apply_adj
+from alphasift.daily_store import normalize_date_yyyymmdd, normalize_ts_code
+
 _DAILY_FEATURE_DEFAULTS = {
     "daily_data_points": pd.NA,
     "change_60d": pd.NA,
@@ -63,6 +66,10 @@ def enrich_daily_features(
     cache_dir: str | Path | None = None,
     cache_ttl_seconds: float | None = None,
     max_workers: int | None = None,
+    daily_bars_dir: str | Path | None = None,
+    end_date: str | None = None,
+    daily_local_fallback_live: bool = False,
+    enrich_mode: str | None = None,
 ) -> pd.DataFrame:
     """Attach daily technical features to the first ``max_rows`` candidates.
 
@@ -78,6 +85,7 @@ def enrich_daily_features(
     daily_quality_flag_counts: dict[str, int] = {}
     daily_source_order_notes: list[str] = []
     daily_source_health: dict[str, object] = {}
+    daily_fetch_failed_codes: list[str] = []
     success_count = 0
     selected_index = list(result.index[:max_rows])
     fetch_requests: list[tuple[object, str]] = []
@@ -98,6 +106,9 @@ def enrich_daily_features(
                 retries=fetch_retries,
                 cache_dir=cache_dir,
                 cache_ttl_seconds=cache_ttl_seconds,
+                daily_bars_dir=daily_bars_dir,
+                end_date=end_date,
+                daily_local_fallback_live=daily_local_fallback_live,
             )
             features = compute_daily_features(hist)
             features["daily_source"] = str(hist.attrs.get("daily_source", ""))
@@ -112,7 +123,10 @@ def enrich_daily_features(
             features = dict(_DAILY_FEATURE_DEFAULTS)
             features["daily_quality_score"] = 0.0
             features["daily_quality_flags"] = "fetch_failed"
-            return idx, features, f"{code}: {exc}", {"daily_quality_flags": "fetch_failed"}
+            return idx, features, f"{code}: {exc}", {
+                "daily_quality_flags": "fetch_failed",
+                "fetch_failed_code": code,
+            }
 
     if len(fetch_requests) <= 1:
         fetched_rows = [fetch_one(request) for request in fetch_requests]
@@ -127,6 +141,9 @@ def enrich_daily_features(
                 daily_quality_flag_counts[flag] = daily_quality_flag_counts.get(flag, 0) + 1
         if error:
             daily_errors.append(error)
+            failed_code = metadata.get("fetch_failed_code")
+            if failed_code:
+                daily_fetch_failed_codes.append(str(failed_code))
         else:
             success_count += 1
             source_name = str(metadata.get("daily_source") or "unknown")
@@ -150,6 +167,21 @@ def enrich_daily_features(
     result.attrs["daily_quality_flag_counts"] = daily_quality_flag_counts
     result.attrs["daily_source_order_notes"] = daily_source_order_notes
     result.attrs["daily_source_health"] = daily_source_health
+    result.attrs["daily_fetch_failed_codes"] = daily_fetch_failed_codes
+    if daily_bars_dir is not None:
+        result.attrs["daily_store_root"] = str(daily_bars_dir)
+        try:
+            from alphasift.daily_store import DailyBarStore
+
+            result.attrs["daily_store_manifest_last_trade_date"] = DailyBarStore(
+                daily_bars_dir
+            ).manifest().get("last_trade_date")
+        except Exception:
+            pass
+    if end_date is not None:
+        result.attrs["daily_end_date"] = end_date
+    if enrich_mode is not None:
+        result.attrs["daily_enrich_mode"] = enrich_mode
     return result
 
 
@@ -161,11 +193,14 @@ def fetch_daily_history(
     retries: int = 2,
     cache_dir: str | Path | None = None,
     cache_ttl_seconds: float | None = None,
+    daily_bars_dir: str | Path | None = None,
+    end_date: str | None = None,
+    daily_local_fallback_live: bool = False,
 ) -> pd.DataFrame:
     """Fetch daily history for one stock code.
 
     ``source`` accepts ``tencent``, ``sina``, ``akshare``, ``baostock``, ``tushare``,
-    ``yfinance`` or ``auto``. ``auto`` prefers Tushare when a token is
+    ``local``, ``yfinance`` or ``auto``. ``auto`` prefers Tushare when a token is
     configured, then Tencent's direct HTTP K-line endpoint before wrapper-based
     free sources. Without a token it starts with Tencent. Sina is a second
     direct HTTP K-line source before wrapper-based fallbacks. ``yfinance`` is
@@ -175,6 +210,17 @@ def fetch_daily_history(
     normalized_code = _normalize_daily_code(code)
     normalized_lookback_days = int(lookback_days)
     src = _normalize_daily_source(source)
+    if src == "local":
+        return _fetch_daily_local(
+            normalized_code,
+            lookback_days=normalized_lookback_days,
+            daily_bars_dir=daily_bars_dir,
+            end_date=end_date,
+            daily_local_fallback_live=daily_local_fallback_live,
+            cache_dir=cache_dir,
+            cache_ttl_seconds=cache_ttl_seconds,
+            retries=retries,
+        )
     if src == "auto":
         sources: tuple[str, ...] = (
             ("tushare", "tencent", "sina", "akshare", "baostock")
@@ -279,6 +325,72 @@ def fetch_daily_history(
     raise RuntimeError(
         f"daily history fetch failed for {normalized_code}: {'; '.join(errors)}"
     )
+
+
+def _fetch_daily_local(
+    code: str,
+    *,
+    lookback_days: int,
+    daily_bars_dir: str | Path | None,
+    end_date: str | None,
+    daily_local_fallback_live: bool,
+    cache_dir: str | Path | None,
+    cache_ttl_seconds: float | None,
+    retries: int,
+) -> pd.DataFrame:
+    from alphasift.daily_store import DailyBarStore, require_pyarrow
+
+    if daily_bars_dir is None:
+        raise RuntimeError("DAILY_BARS_DIR is required when DAILY_SOURCE=local")
+    require_pyarrow()
+    root = Path(daily_bars_dir)
+    if not root.is_dir():
+        raise RuntimeError(f"daily bar store directory not found: {root}")
+    store = DailyBarStore(root, adj=_normalize_tushare_adj(os.getenv("TUSHARE_DAILY_ADJ", "qfq")) or "qfq")
+    try:
+        store.manifest()
+    except Exception as exc:
+        raise RuntimeError(f"daily bar store manifest unreadable at {root}: {exc}") from exc
+
+    cache_path = None
+    cache_key_source = "local"
+    if cache_dir is not None:
+        cache_path = _daily_history_cache_path(
+            cache_dir,
+            code=code,
+            source=cache_key_source,
+            lookback_days=lookback_days,
+            end_date=end_date,
+        )
+        cached = _read_daily_history_cache(cache_path, ttl_seconds=cache_ttl_seconds)
+        if cached is not None:
+            return cached
+
+    try:
+        result = store.read_history(code, lookback_days=lookback_days, end_date=end_date)
+    except FileNotFoundError:
+        if daily_local_fallback_live:
+            return fetch_daily_history(
+                code,
+                lookback_days=lookback_days,
+                source="tushare" if _has_tushare_token() else "tencent",
+                retries=retries,
+                cache_dir=cache_dir,
+                cache_ttl_seconds=cache_ttl_seconds,
+                end_date=end_date,
+            )
+        raise
+    result.attrs["daily_source"] = "local"
+    result.attrs["daily_requested_source"] = "local"
+    if cache_path is not None:
+        _write_daily_history_cache(
+            cache_path,
+            result,
+            code=code,
+            source=cache_key_source,
+            lookback_days=lookback_days,
+        )
+    return result
 
 
 def _normalize_daily_code(value: object) -> str:
@@ -392,8 +504,10 @@ def _daily_history_cache_path(
     code: str,
     source: str,
     lookback_days: int,
+    end_date: str | None = None,
 ) -> Path:
-    key = f"{code}|{source}|{int(lookback_days)}"
+    end_key = normalize_date_yyyymmdd(end_date) or ""
+    key = f"{code}|{source}|{int(lookback_days)}|{end_key}"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     safe_source = "".join(ch if ch.isalnum() else "-" for ch in source).strip("-") or "source"
     safe_code = "".join(ch if ch.isalnum() else "-" for ch in code).strip("-") or "code"
@@ -607,7 +721,7 @@ def _fetch_daily_tushare(code: str, *, lookback_days: int) -> pd.DataFrame:
     start_date = (datetime.now() - timedelta(days=max(lookback_days * 2, 90))).strftime("%Y%m%d")
     end_date = datetime.now().strftime("%Y%m%d")
     adj = _normalize_tushare_adj(os.getenv("TUSHARE_DAILY_ADJ", "qfq"))
-    ts_code = _to_tushare_code(code)
+    ts_code = normalize_ts_code(code)
     df = pro.daily(
         ts_code=ts_code,
         start_date=start_date,
@@ -688,20 +802,10 @@ def _apply_tushare_adjustment(
     if factors is None or factors.empty:
         raise RuntimeError(f"tushare adj_factor empty for {ts_code}")
 
-    merged = df.merge(factors, on="trade_date", how="left")
-    merged = merged.sort_values("trade_date")
-    merged["adj_factor"] = pd.to_numeric(merged["adj_factor"], errors="coerce").bfill()
-    valid_factors = pd.to_numeric(factors["adj_factor"], errors="coerce").dropna()
-    if valid_factors.empty:
-        raise RuntimeError(f"tushare adj_factor invalid for {ts_code}")
-    latest_factor = float(valid_factors.iloc[0])
-    for col in ("open", "high", "low", "close"):
-        merged[col] = pd.to_numeric(merged[col], errors="coerce")
-        if adj == "hfq":
-            merged[col] = merged[col] * merged["adj_factor"]
-        else:
-            merged[col] = merged[col] * merged["adj_factor"] / latest_factor
-    return merged.drop(columns=["adj_factor"])
+    raw = df.rename(columns={"trade_date": "date", "vol": "volume"}).copy()
+    factor_frame = factors.rename(columns={"trade_date": "date"}).copy()
+    adjusted = apply_adj(raw, factor_frame, adj=adj)
+    return adjusted.rename(columns={"date": "trade_date"})
 
 
 def _normalize_tushare_adj(value: str | None) -> str | None:
@@ -777,15 +881,6 @@ def _to_baostock_code(code: str) -> str:
     if raw.startswith(("6", "9", "5")):
         return f"sh.{raw}"
     return f"sz.{raw}"
-
-
-def _to_tushare_code(code: str) -> str:
-    raw = str(code).strip().zfill(6)
-    if raw.startswith(("4", "8", "920")):
-        return f"{raw}.BJ"
-    if raw.startswith(("6", "9", "5")):
-        return f"{raw}.SH"
-    return f"{raw}.SZ"
 
 
 def _to_tencent_code(code: str) -> str:

@@ -175,6 +175,8 @@ screening:
 
 如果策略配置了这些条件，pipeline 会先做快照字段硬筛，再对 Top N 候选拉取日 K 并计算特征，最后执行日 K 硬筛。这样能开放 `shrink_pullback` 这类策略，同时避免对全市场逐只拉取历史行情。
 
+若已维护本地 Tushare 日 K 库，可启用**全量日 K 硬筛**（方案 C）：快照筛后对剩余候选全部拉日 K 并硬筛，不再按快照 `screen_score` 截断 Top N。详见 [全量日 K 硬筛改造方案](plans/2026-06-26-full-daily-k-hard-filter.md)。
+
 ## 版本与评估
 
 策略语义变化时建议更新 `version`，例如：

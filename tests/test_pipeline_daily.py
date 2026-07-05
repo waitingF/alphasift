@@ -228,3 +228,143 @@ def test_sort_screened_candidates_keeps_default_tie_breakers_without_weights():
     sorted_df = _sort_screened_candidates(df, ScreeningConfig())
 
     assert list(sorted_df["code"]) == ["300001", "000001", "600000"]
+
+
+def test_pipeline_full_pool_passes_all_candidates(monkeypatch):
+    rows = []
+    for idx in range(150):
+        rows.append({
+            "code": f"{idx:06d}",
+            "name": f"stock-{idx}",
+            "price": 10.0,
+            "change_pct": -0.5,
+            "amount": 200_000_000,
+            "turnover_rate": 2.0,
+            "volume_ratio": 1.2,
+            "pe_ratio": 8.0,
+            "pb_ratio": 0.8,
+            "total_mv": 100_000_000_000,
+        })
+    df = pd.DataFrame(rows)
+    df.attrs["snapshot_source"] = "test"
+    df.attrs["trade_date"] = "20260403"
+    calls = []
+
+    def fake_enrich(frame, **kwargs):
+        calls.append({"rows": len(frame), **kwargs})
+        enriched = frame.copy()
+        enriched["ma_bullish"] = True
+        enriched["price_above_ma20"] = True
+        enriched["signal_score"] = 80
+        enriched["change_60d"] = 12
+        enriched["macd_status"] = "bullish"
+        enriched["rsi_status"] = "neutral"
+        enriched["volume_ratio_20d"] = 1.0
+        enriched["pullback_to_ma20_pct"] = 4
+        enriched["volatility_20d_pct"] = 25
+        enriched["max_drawdown_20d_pct"] = -5
+        enriched["atr_20_pct"] = 3
+        enriched["daily_quality_score"] = 100
+        enriched["daily_quality_flags"] = ""
+        enriched["daily_source"] = "local"
+        enriched.attrs["daily_success_count"] = len(enriched)
+        return enriched
+
+    monkeypatch.setattr("alphasift.pipeline.fetch_snapshot_with_fallback", lambda sources, **kwargs: df)
+    monkeypatch.setattr("alphasift.pipeline.enrich_daily_features", fake_enrich)
+    monkeypatch.setattr("alphasift.pipeline._validate_local_daily_store", lambda config: None)
+
+    result = screen(
+        "shrink_pullback",
+        use_llm=False,
+        daily_enrich_full_pool=True,
+        daily_source="local",
+        config=Config(
+            llm_api_key="",
+            snapshot_source_priority=["test"],
+            strategies_dir=Path("strategies"),
+            risk_enabled=False,
+            daily_enrich_full_pool=True,
+            daily_source="local",
+        ),
+    )
+
+    assert calls[0]["rows"] == 150
+    assert calls[0]["max_rows"] == 150
+    assert calls[0]["end_date"] == "20260403"
+    assert any("Daily enrich mode: full_pool" in item for item in result.degradation)
+    assert result.daily_full_pool is True
+
+
+def test_pipeline_fetch_failed_rows_are_filtered(monkeypatch):
+    df = pd.DataFrame([
+        {
+            "code": "000001",
+            "name": "平安银行",
+            "price": 10.0,
+            "change_pct": -0.5,
+            "amount": 200_000_000,
+            "turnover_rate": 2.0,
+            "volume_ratio": 1.2,
+            "pe_ratio": 8.0,
+            "pb_ratio": 0.8,
+            "total_mv": 100_000_000_000,
+        },
+        {
+            "code": "600000",
+            "name": "浦发银行",
+            "price": 11.0,
+            "change_pct": -0.8,
+            "amount": 190_000_000,
+            "turnover_rate": 2.0,
+            "volume_ratio": 1.1,
+            "pe_ratio": 9.0,
+            "pb_ratio": 0.9,
+            "total_mv": 90_000_000_000,
+        },
+    ])
+    df.attrs["snapshot_source"] = "test"
+
+    def fake_enrich(frame, **kwargs):
+        enriched = frame.copy()
+        for idx, row in enriched.iterrows():
+            ok = row["code"] == "000001"
+            enriched.at[idx, "ma_bullish"] = ok
+            enriched.at[idx, "price_above_ma20"] = True
+            enriched.at[idx, "signal_score"] = 72 if ok else 0
+            enriched.at[idx, "change_60d"] = 12 if ok else 0
+            enriched.at[idx, "macd_status"] = "bullish"
+            enriched.at[idx, "rsi_status"] = "neutral"
+            enriched.at[idx, "volume_ratio_20d"] = 1.0
+            enriched.at[idx, "pullback_to_ma20_pct"] = 4 if ok else 12
+            enriched.at[idx, "volatility_20d_pct"] = 25 if ok else 60
+            enriched.at[idx, "max_drawdown_20d_pct"] = -5 if ok else -18
+            enriched.at[idx, "atr_20_pct"] = 3 if ok else 9
+            enriched.at[idx, "daily_quality_score"] = 100 if ok else 0
+            enriched.at[idx, "daily_quality_flags"] = "" if ok else "fetch_failed"
+            enriched.at[idx, "daily_source"] = "local"
+        enriched.attrs["daily_success_count"] = 1
+        enriched.attrs["daily_fetch_failed_codes"] = ["600000"]
+        return enriched
+
+    monkeypatch.setattr("alphasift.pipeline.fetch_snapshot_with_fallback", lambda sources, **kwargs: df)
+    monkeypatch.setattr("alphasift.pipeline.enrich_daily_features", fake_enrich)
+    monkeypatch.setattr("alphasift.pipeline._validate_local_daily_store", lambda config: None)
+
+    result = screen(
+        "shrink_pullback",
+        use_llm=False,
+        daily_enrich_full_pool=True,
+        daily_source="local",
+        config=Config(
+            llm_api_key="",
+            snapshot_source_priority=["test"],
+            strategies_dir=Path("strategies"),
+            risk_enabled=False,
+            daily_enrich_full_pool=True,
+            daily_source="local",
+        ),
+    )
+
+    assert result.after_filter_count == 1
+    assert result.picks[0].code == "000001"

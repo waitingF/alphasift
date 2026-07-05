@@ -448,7 +448,9 @@ def _fetch_tushare() -> pd.DataFrame:
     if daily_basic is None or daily_basic.empty:
         raise RuntimeError(f"tushare daily_basic returned empty data for {trade_date}")
 
-    return _prepare_tushare_snapshot(daily, daily_basic, stock_basic)
+    result = _prepare_tushare_snapshot(daily, daily_basic, stock_basic)
+    result.attrs["trade_date"] = trade_date
+    return result
 
 
 def _configure_tushare_client(pro: object, *, token: str) -> None:

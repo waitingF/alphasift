@@ -2,6 +2,7 @@
 """Main pipeline — orchestrates L1 → L2 → result."""
 
 import logging
+import os
 import uuid
 from pathlib import Path
 
@@ -55,6 +56,8 @@ def screen(
     post_analysis_max_picks: int | None = None,
     daily_enrich: bool | None = None,
     daily_enrich_max_candidates: int | None = None,
+    daily_enrich_full_pool: bool | None = None,
+    daily_source: str | None = None,
     deep_analysis: bool = False,
     deep_analysis_max_picks: int | None = None,
     context: dict[str, object] | None = None,
@@ -123,6 +126,12 @@ def screen(
     daily_needed = requires_daily_features(screening.hard_filters)
     daily_requested = config.daily_enrich_enabled if daily_enrich is None else daily_enrich
     daily_limit = daily_enrich_max_candidates or config.daily_enrich_max_candidates
+    full_pool = (
+        config.daily_enrich_full_pool
+        if daily_enrich_full_pool is None
+        else daily_enrich_full_pool
+    )
+    effective_daily_source = daily_source or config.daily_source
     snapshot_filters = without_daily_filters(screening.hard_filters) if daily_needed else screening.hard_filters
 
     # 2. Fetch snapshot
@@ -192,32 +201,108 @@ def screen(
 
     daily_enriched = False
     daily_enrich_count = 0
+    daily_enrich_mode = ""
+    daily_effective_trade_date: str | None = None
+    daily_store_last_trade_date: str | None = None
     if daily_needed or daily_requested:
-        provisional = _sort_screened_candidates(compute_screen_scores(df, screening), screening)
-        enrich_count = min(daily_limit, len(provisional))
-        daily_candidates = provisional.head(enrich_count)
+        use_full_pool = bool(daily_needed and full_pool)
+        if use_full_pool:
+            enrich_df = df
+            enrich_count = len(enrich_df)
+            daily_enrich_mode = "full_pool"
+            if enrich_count > config.daily_full_pool_warn_threshold:
+                degradation.append(
+                    f"Daily full_pool candidate count {enrich_count} exceeds "
+                    f"warn threshold {config.daily_full_pool_warn_threshold}"
+                )
+        else:
+            provisional = _sort_screened_candidates(compute_screen_scores(df, screening), screening)
+            enrich_count = min(daily_limit, len(provisional))
+            enrich_df = provisional.head(enrich_count)
+            daily_enrich_mode = "top_n"
+            degradation.append(f"Daily enrich mode: top_n limit={enrich_count}")
+
+        effective_trade_date, trade_date_notes = resolve_effective_trade_date(
+            config,
+            snapshot_df,
+            daily_bars_dir=config.daily_bars_dir,
+        )
+        daily_effective_trade_date = effective_trade_date
+        degradation.extend(trade_date_notes)
+        if effective_daily_source == "local" and config.daily_bars_dir:
+            try:
+                from alphasift.daily_store import DailyBarStore
+
+                manifest_date = str(
+                    DailyBarStore(config.daily_bars_dir).manifest().get("last_trade_date", "")
+                )
+                degradation.extend(_compare_trade_dates(manifest_date, effective_trade_date))
+            except Exception:
+                pass
+
+        if use_full_pool and effective_daily_source == "local":
+            _validate_local_daily_store(config)
+
         try:
             enriched = enrich_daily_features(
-                daily_candidates,
+                enrich_df,
                 max_rows=enrich_count,
                 lookback_days=config.daily_lookback_days,
-                source=config.daily_source,
+                source=effective_daily_source,
                 fetch_retries=config.daily_fetch_retries,
                 max_workers=config.daily_fetch_max_workers,
+                cache_dir=config.daily_history_cache_dir,
+                cache_ttl_seconds=config.daily_history_cache_ttl_hours * 3600,
+                daily_bars_dir=config.daily_bars_dir,
+                end_date=effective_trade_date,
+                daily_local_fallback_live=config.daily_local_fallback_live,
+                enrich_mode=daily_enrich_mode,
             )
             daily_enriched = True
             daily_errors = [str(item) for item in enriched.attrs.get("daily_errors", [])]
             daily_enrich_count = int(enriched.attrs.get("daily_success_count", len(enriched)))
+            fetch_failed_codes = [
+                str(item) for item in enriched.attrs.get("daily_fetch_failed_codes", []) or []
+            ]
+            attempted = enrich_count
+            succeeded = daily_enrich_count
+            fetch_failed = len(fetch_failed_codes)
+            daily_store_last_trade_date = str(
+                enriched.attrs.get("daily_store_manifest_last_trade_date", "") or ""
+            ) or None
+            if not daily_store_last_trade_date and config.daily_bars_dir:
+                try:
+                    from alphasift.daily_store import DailyBarStore
+
+                    daily_store_last_trade_date = str(
+                        DailyBarStore(config.daily_bars_dir).manifest().get("last_trade_date", "")
+                    ) or None
+                except Exception:
+                    daily_store_last_trade_date = None
             daily_source_counts = dict(enriched.attrs.get("daily_source_counts", {}) or {})
             daily_quality_flag_counts = dict(enriched.attrs.get("daily_quality_flag_counts", {}) or {})
             daily_source_order_notes = [str(item) for item in enriched.attrs.get("daily_source_order_notes", [])]
             daily_source_health_notes = _daily_source_health_notes(
                 dict(enriched.attrs.get("daily_source_health", {}) or {})
             )
-            degradation.append(
-                f"Daily K-line enrichment attempted {enrich_count} candidates, "
-                f"succeeded {daily_enrich_count} of {after_filter_count} snapshot-filtered candidates"
-            )
+            if use_full_pool:
+                degradation.append(
+                    f"Daily enrich mode: full_pool; attempted={attempted} "
+                    f"succeeded={succeeded} fetch_failed={fetch_failed}"
+                )
+                if fetch_failed_codes:
+                    sample = ", ".join(fetch_failed_codes[:10])
+                    suffix = f" (+{len(fetch_failed_codes) - 10} more)" if len(fetch_failed_codes) > 10 else ""
+                    degradation.append(f"Daily K-line fetch_failed codes: {sample}{suffix}")
+                if attempted > 0 and fetch_failed / attempted > 0.05:
+                    degradation.append(
+                        "daily fetch failure rate high; check daily-bars sync or DAILY_BARS_DIR"
+                    )
+            else:
+                degradation.append(
+                    f"Daily K-line enrichment attempted {enrich_count} candidates, "
+                    f"succeeded {daily_enrich_count} of {after_filter_count} snapshot-filtered candidates"
+                )
             if daily_source_counts:
                 source_summary = ", ".join(
                     f"{name}={count}" for name, count in sorted(daily_source_counts.items())
@@ -456,10 +541,71 @@ def screen(
         post_analyzers=analyzer_names,
         daily_enriched=daily_enriched,
         daily_enrich_count=daily_enrich_count,
+        daily_enrich_mode=daily_enrich_mode,
+        daily_full_pool=bool(daily_needed and full_pool),
+        daily_store_last_trade_date=daily_store_last_trade_date,
+        daily_effective_trade_date=daily_effective_trade_date,
         risk_enabled=config.risk_enabled,
         portfolio_diversity_enabled=config.portfolio_diversity_enabled,
         portfolio_concentration_notes=portfolio_concentration_notes,
     )
+
+
+def resolve_effective_trade_date(
+    config: Config,
+    snapshot_df: pd.DataFrame,
+    *,
+    daily_bars_dir: Path | None = None,
+) -> tuple[str | None, list[str]]:
+    """Resolve the trade date used to slice daily K-line history."""
+    notes: list[str] = []
+    explicit = os.getenv("TUSHARE_TRADE_DATE", "").strip()
+    if explicit:
+        return explicit, notes
+
+    snapshot_trade_date = snapshot_df.attrs.get("trade_date")
+    if snapshot_trade_date:
+        return str(snapshot_trade_date), notes
+
+    bars_dir = daily_bars_dir or config.daily_bars_dir
+    if bars_dir is not None:
+        try:
+            from alphasift.daily_store import DailyBarStore
+
+            manifest_date = str(DailyBarStore(bars_dir).manifest().get("last_trade_date", ""))
+            if manifest_date:
+                notes.append(
+                    "effective trade date fallback: daily store manifest last_trade_date"
+                )
+                return manifest_date, notes
+        except Exception:
+            pass
+    return None, notes
+
+
+def _validate_local_daily_store(config: Config) -> None:
+    from alphasift.daily_store import DailyBarStore, require_pyarrow
+
+    bars_dir = config.daily_bars_dir
+    if bars_dir is None or not Path(bars_dir).is_dir():
+        raise RuntimeError(
+            f"DAILY_SOURCE=local requires an existing daily bar store at {bars_dir}; "
+            "run `alphasift daily-bars init` first"
+        )
+    require_pyarrow()
+    DailyBarStore(bars_dir).manifest()
+
+
+def _compare_trade_dates(manifest_date: str | None, effective_date: str | None) -> list[str]:
+    if not manifest_date or not effective_date:
+        return []
+    manifest = manifest_date.replace("-", "")[:8]
+    effective = effective_date.replace("-", "")[:8]
+    if manifest < effective:
+        return [f"daily store stale: manifest={manifest} effective={effective}"]
+    if manifest > effective:
+        return [f"daily store ahead of snapshot: manifest={manifest} effective={effective}"]
+    return []
 
 
 def _df_to_picks(df: pd.DataFrame) -> list[Pick]:
