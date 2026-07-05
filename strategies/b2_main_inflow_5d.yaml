@@ -1,0 +1,48 @@
+# B2 + 5 日主力净流入
+name: b2_main_inflow_5d
+display_name: B2 + 5日主力净流入
+description: B2 技术条件 + 5 日累计主力净流入为正（需 flow-bars）
+version: "1.0"
+category: momentum
+tags: [b2, kdj, zg, daily_k, capital_flow, breakout]
+style:
+  risk_profile: aggressive
+  holding_period: short_term
+  execution_style: trend_following
+  market_regime: [trend_up, momentum]
+  capital_profile: medium_liquidity
+  ui_badge: B2+资金
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 50000000
+    prev_kdj_j_max: 13
+    daily_change_min: 3.95
+    require_volume_above_prev: true
+    kdj_j_max: 80
+    require_zg_short_above_long: true
+    require_close_above_zg_long: true
+    main_net_inflow_5d_min: 0
+  tech_weight: 0.52
+  factor_weights:
+    momentum: 0.32
+    reversal: 0.22
+    activity: 0.26
+    stability: 0.20
+  scoring_profile:
+    momentum_intraday_slope: 1.2
+    activity_ideal_volume_ratio: 2.2
+  risk_profile:
+    chase_change_pct: 9.5
+    abnormal_volume_ratio: 6.0
+  portfolio_profile:
+    max_same_bucket: 2
+    concentration_penalty: 4.0
+  ranking_hints: |
+    优先关注：
+    1. 满足 B2 放量突破 + ZG 多头
+    2. 5 日累计主力净流入为正
+  max_output: 15

@@ -16,6 +16,7 @@ import pandas as pd
 import requests
 
 from alphasift.daily_adjust import apply_adj
+from alphasift.daily_indicators import extract_indicator_snapshot
 from alphasift.daily_store import normalize_date_yyyymmdd, normalize_ts_code
 from alphasift.source_guard import call_with_timeout, parse_source_timeout_seconds
 
@@ -44,6 +45,25 @@ _DAILY_FEATURE_DEFAULTS = {
     "daily_quality_score": pd.NA,
     "daily_quality_flags": "",
     "daily_source": "",
+    "zg_short": pd.NA,
+    "zg_long": pd.NA,
+    "kdj_k": pd.NA,
+    "kdj_d": pd.NA,
+    "kdj_j": pd.NA,
+    "prev_kdj_j": pd.NA,
+    "boll_mid": pd.NA,
+    "boll_upper": pd.NA,
+    "boll_lower": pd.NA,
+    "brick": pd.NA,
+    "daily_change_pct": pd.NA,
+    "daily_amplitude_pct": pd.NA,
+    "volume_above_prev": pd.NA,
+    "zg_short_above_long": pd.NA,
+    "close_above_zg_long": pd.NA,
+    "close_below_boll_lower": pd.NA,
+    "close_above_boll_upper": pd.NA,
+    "kdj_golden_cross": pd.NA,
+    "brick_turn_up": pd.NA,
 }
 _DAILY_ENRICH_MAX_WORKERS = 1
 _DAILY_HISTORY_CACHE_VERSION = 1
@@ -954,6 +974,14 @@ def compute_daily_features(hist: pd.DataFrame) -> dict[str, object]:
     last_ma60 = _last_float(ma60)
     shape = _compute_shape_features(df, last_close=last_close, last_ma20=last_ma20)
     quality = _compute_daily_quality(hist, df)
+    indicators = extract_indicator_snapshot(df)
+    indicator_flags = str(indicators.pop("indicator_quality_flags", "") or "")
+    if indicator_flags:
+        existing_flags = str(quality.get("daily_quality_flags", "") or "")
+        merged_flags = [flag for flag in (existing_flags, indicator_flags) if flag]
+        quality["daily_quality_flags"] = ";".join(
+            dict.fromkeys(flag for chunk in merged_flags for flag in chunk.split(";") if flag)
+        )
 
     lookback_idx = max(0, len(close) - 61)
     base_close = float(close.iloc[lookback_idx])
@@ -987,6 +1015,7 @@ def compute_daily_features(hist: pd.DataFrame) -> dict[str, object]:
         "signal_score": round(float(signal_score), 4),
         **shape,
         **quality,
+        **indicators,
     }
 
 

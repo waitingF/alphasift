@@ -1,0 +1,45 @@
+# B1 + 主力连续流入 + 非价涨量出
+name: b1_main_inflow_5d_no_divergence
+display_name: B1 + 主力5日流入（无背离）
+description: B1 技术条件 + 主力连续 5 日净流入 + 非价涨量出（需 flow-bars + daily-bars）
+version: "1.0"
+category: reversal
+tags: [b1, kdj, zg, daily_k, capital_flow, main_inflow]
+style:
+  risk_profile: balanced
+  holding_period: swing
+  execution_style: reversal
+  market_regime: [oversold_repair, trend_up]
+  capital_profile: medium_liquidity
+  ui_badge: B1+资金
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 50000000
+    kdj_j_max: 13
+    require_zg_short_above_long: true
+    main_inflow_streak_min: 5
+    require_no_price_up_flow_out: true
+  tech_weight: 0.44
+  factor_weights:
+    reversal: 0.28
+    momentum: 0.24
+    activity: 0.28
+    stability: 0.20
+  scoring_profile:
+    reversal_ideal_change_pct: -1.5
+    activity_ideal_volume_ratio: 2.0
+  risk_profile:
+    chase_change_pct: 7.0
+    abnormal_volume_ratio: 6.0
+  portfolio_profile:
+    max_same_bucket: 2
+    concentration_penalty: 3.0
+  ranking_hints: |
+    优先关注：
+    1. 满足 B1 且主力连续净流入
+    2. 排除价涨量出背离形态
+  max_output: 15

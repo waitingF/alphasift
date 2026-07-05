@@ -136,18 +136,19 @@ def test_cli_strategies_explain_matches_data_requirements(monkeypatch, capsys):
         "--data-requirement",
         "daily_k",
         "--limit",
-        "3",
+        "10",
         "--explain",
     ])
 
     main()
 
     out = capsys.readouterr().out
-    assert "strategy_matches=3" in out
-    assert "criteria=risk_profile=aggressive;data_requirements=daily_k;limit=3" in out
+    assert "strategy_matches=10" in out
+    assert "criteria=risk_profile=aggressive;data_requirements=daily_k;limit=10" in out
     assert "volume_breakout" in out
     assert "matched=risk_profile:aggressive,data_requirement:daily_k" in out
     assert "main_inflow_momentum" in out
+    assert "b2" in out
     assert "capital_heat" in out
     assert "missing=data_requirement:daily_k" in out
 
@@ -383,7 +384,7 @@ def test_cli_overview_json_combines_catalog_health_and_runs(monkeypatch, tmp_pat
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema_version"] == 1
     assert payload["summary"]["strategy_match_count"] == 1
-    assert payload["strategy_matches"][0]["name"] == "main_inflow_momentum"
+    assert payload["strategy_matches"][0]["name"] == "b2"
     assert payload["recent_runs"][0]["run_id"] == "run_breakout"
     assert payload["data_source_history"]["snapshot_sources"][0]["snapshot_source"] == "sina"
     assert payload["performance_summary"]["leaderboard"][0]["strategy"] == "volume_breakout"

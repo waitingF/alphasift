@@ -18,7 +18,14 @@ def test_disabled_strategies_are_not_listed():
     strategies = load_all_strategies(Path("strategies"))
 
     assert "balanced_alpha" in strategies
+    assert "b1" in strategies
+    assert "b1_above_long" in strategies
+    assert "b1_perfect" in strategies
+    assert "b2" in strategies
     assert "blue_chip_income" in strategies
+    assert "b1_main_inflow_5d" in strategies
+    assert "b1_main_inflow_5d_no_divergence" in strategies
+    assert "b2_main_inflow_5d" in strategies
     assert "capital_heat" in strategies
     assert "dual_low" in strategies
     assert "low_volatility_quality" in strategies
@@ -34,8 +41,16 @@ def test_list_strategies_returns_enabled_strategies_only():
     names = [item.name for item in list_strategies(Path("strategies"))]
 
     assert names == [
+        "b1",
+        "b1_above_long",
+        "b1_main_inflow_5d",
+        "b1_main_inflow_5d_no_divergence",
+        "b1_perfect",
+        "b2",
+        "b2_main_inflow_5d",
         "balanced_alpha",
         "blue_chip_income",
+        "brick_turn_up",
         "capital_heat",
         "dual_low",
         "low_volatility_quality",
@@ -175,11 +190,17 @@ def test_match_strategies_ranks_partial_matches():
         limit=3,
     )
 
-    assert [item["name"] for item in matches][:2] == ["main_inflow_momentum", "volume_breakout"]
+    assert [item["name"] for item in matches][:3] == ["b2", "b2_main_inflow_5d", "main_inflow_momentum"]
     assert matches[0]["score"] >= matches[1]["score"]
     assert "data_requirement:daily_k" in matches[0]["matched"]
-    assert matches[2]["name"] == "capital_heat"
-    assert "data_requirement:daily_k" in matches[2]["missing"]
+    assert matches[0]["name"] == "b2"
+    capital_heat = next(item for item in match_strategies(
+        Path("strategies"),
+        risk_profile="aggressive",
+        data_requirements=["daily_k"],
+        limit=20,
+    ) if item["name"] == "capital_heat")
+    assert "data_requirement:daily_k" in capital_heat["missing"]
 
 
 def test_strategy_facets_are_ui_filter_ready():

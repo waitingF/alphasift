@@ -73,6 +73,19 @@ screening:
     signal_score_min: int      # 最低信号得分
     macd_status_whitelist: [string]  # MACD 状态白名单
     rsi_status_whitelist: [string]   # RSI 状态白名单
+    kdj_j_max: float            # 当日 KDJ.J 上限（如 B1 的 13）
+    kdj_j_min: float            # 当日 KDJ.J 下限
+    prev_kdj_j_max: float       # 前一日 KDJ.J 上限（如 B2 的 13）
+    require_kdj_golden_cross: bool
+    require_zg_short_above_long: bool   # ZG 短期 > ZG 长期
+    require_close_above_zg_long: bool   # 收盘 > ZG 长期
+    require_close_below_boll_lower: bool
+    require_close_above_boll_upper: bool
+    daily_amplitude_max: float  # 当日振幅上限 %（相对前收）
+    daily_change_min: float     # 日 K 涨幅下限 %（相对前收，非快照涨跌幅）
+    daily_change_max: float     # 日 K 涨幅上限 %
+    require_volume_above_prev: bool
+    require_brick_turn_up: bool # 砖型图 XG 组合信号
 
   tech_weight: float       # 技术分数权重，0-1，默认 0.35
   factor_weights:          # 可选，多因子评分权重；配置后优先于 tech_weight
@@ -156,6 +169,41 @@ alphasift strategies --template momentum_breakout_daily --json
 | `value` | 估值驱动的价值筛选 | 双低、高股息、低 PEG |
 | `pattern` | 技术形态识别 | 一阳穿三阴、底部放量 |
 | `reversal` | 反转信号捕捉 | 超跌反弹、底背离 |
+
+## self-stock 移植策略（B1/B2 族）
+
+以下策略由 self-stock-project 条件语义映射而来，依赖 `daily.py` enrich 产出的 ZG/KDJ/BOLL/brick 特征列：
+
+| 策略 id | 说明 | 关键 hard_filters |
+|---|---|---|
+| `b1` | KDJ.J<13 且 ZG 短期>长期 | `kdj_j_max: 13`, `require_zg_short_above_long` |
+| `b1_above_long` | B1 + 收盘>长期线 | 同上 + `require_close_above_zg_long` |
+| `b1_perfect` | 完美 B1 | 同上 + `daily_amplitude_max: 4.2`, `daily_change_min/max` |
+| `b2` | 昨日超卖 + 今日放量上涨 | `prev_kdj_j_max`, `daily_change_min`, `require_volume_above_prev` 等 |
+| `brick_turn_up` | 砖型图 XG | `require_brick_turn_up` |
+| `b1_main_inflow_5d` | B1 + 主力连续 5 日流入 | B1 条件 + `main_inflow_streak_min: 5` |
+| `b1_main_inflow_5d_no_divergence` | B1 + 主力流入 + 非价涨量出 | 同上 + `require_no_price_up_flow_out`（需 daily-bars） |
+| `b2_main_inflow_5d` | B2 + 5 日主力净流入 | B2 条件 + `main_net_inflow_5d_min: 0` |
+
+ZG 长期需至少 114 根日 K；默认 lookback 120 刚好满足。不足时 enrich 会写入 `daily_quality_flags=zg_insufficient_bars`，对应 hard filter 将无法通过。
+
+## 形态相似度检索（pattern-search）
+
+基于本地 `daily-bars` 的形态相似度模块（移植自 self-stock `stock_selector`）：
+
+```bash
+alphasift daily-bars init --lookback-days 800
+alphasift daily-bars sync
+alphasift pattern-search --query-json query.json --metric dtw --top 30 --json
+```
+
+`query.json` 格式：
+
+```json
+{"bars": [{"date": "2024-01-01", "open": 10, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 1000}]}
+```
+
+支持度量：`euclidean`、`manhattan`、`chebyshev`、`dtw`、`pearson`、`spearman`、`cosine`。
 
 ## ranking_hints 编写建议
 

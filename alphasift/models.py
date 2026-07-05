@@ -51,6 +51,19 @@ class HardFilterConfig:
     main_net_inflow_min: float | None = None
     main_net_inflow_rate_min: float | None = None
     require_no_price_up_flow_out: bool = False
+    kdj_j_max: float | None = None
+    kdj_j_min: float | None = None
+    prev_kdj_j_max: float | None = None
+    require_kdj_golden_cross: bool = False
+    require_zg_short_above_long: bool = False
+    require_close_above_zg_long: bool = False
+    require_close_below_boll_lower: bool = False
+    require_close_above_boll_upper: bool = False
+    daily_amplitude_max: float | None = None
+    daily_change_min: float | None = None
+    daily_change_max: float | None = None
+    require_volume_above_prev: bool = False
+    require_brick_turn_up: bool = False
 
 
 @dataclass
@@ -163,6 +176,19 @@ class Pick:
     daily_quality_score: float | None = None
     daily_quality_flags: str = ""
     daily_source: str = ""
+    zg_short: float | None = None
+    zg_long: float | None = None
+    kdj_k: float | None = None
+    kdj_d: float | None = None
+    kdj_j: float | None = None
+    prev_kdj_j: float | None = None
+    boll_upper: float | None = None
+    boll_lower: float | None = None
+    daily_amplitude_pct: float | None = None
+    daily_change_pct: float | None = None
+    zg_short_above_long: bool | None = None
+    close_above_zg_long: bool | None = None
+    brick_turn_up: bool | None = None
     factor_scores: dict[str, float] = field(default_factory=dict)
     llm_confidence: float | None = None
     llm_sector: str = ""

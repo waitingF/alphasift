@@ -1,0 +1,47 @@
+# 完美 B1
+name: b1_perfect
+display_name: 完美B1
+description: 常规 B1 + 收盘 > ZG 长期 + 当日振幅 < 4.2% + 涨幅在 [-2%, +2.5%]
+version: "1.0"
+category: reversal
+tags: [b1, kdj, zg, daily_k, perfect]
+style:
+  risk_profile: balanced
+  holding_period: swing
+  execution_style: reversal
+  market_regime: [oversold_repair, range_bound]
+  capital_profile: medium_liquidity
+  ui_badge: 完美B1
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 50000000
+    kdj_j_max: 13
+    require_zg_short_above_long: true
+    require_close_above_zg_long: true
+    daily_amplitude_max: 4.2
+    daily_change_min: -2.0
+    daily_change_max: 2.5
+  tech_weight: 0.45
+  factor_weights:
+    reversal: 0.32
+    momentum: 0.24
+    stability: 0.24
+    liquidity: 0.20
+  scoring_profile:
+    reversal_ideal_change_pct: 0.5
+    rsi_oversold_bonus: 12.0
+  risk_profile:
+    chase_change_pct: 5.0
+    weak_signal_score: 40.0
+  portfolio_profile:
+    max_same_bucket: 2
+    concentration_penalty: 3.0
+  ranking_hints: |
+    优先关注：
+    1. 满足 B1 且收盘在长期趋势线之上
+    2. 当日振幅与涨跌幅受控，形态更紧凑
+  max_output: 15

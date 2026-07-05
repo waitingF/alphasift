@@ -34,6 +34,19 @@ _DAILY_FILTER_DEFAULTS = {
     "max_drawdown_20d_pct_max": None,
     "atr_20_pct_min": None,
     "atr_20_pct_max": None,
+    "kdj_j_max": None,
+    "kdj_j_min": None,
+    "prev_kdj_j_max": None,
+    "require_kdj_golden_cross": False,
+    "require_zg_short_above_long": False,
+    "require_close_above_zg_long": False,
+    "require_close_below_boll_lower": False,
+    "require_close_above_boll_upper": False,
+    "daily_amplitude_max": None,
+    "daily_change_min": None,
+    "daily_change_max": None,
+    "require_volume_above_prev": False,
+    "require_brick_turn_up": False,
 }
 _FLOW_FILTER_DEFAULTS = {
     "main_inflow_streak_min": None,
@@ -103,6 +116,20 @@ def apply_hard_filters(df: pd.DataFrame, filters: HardFilterConfig) -> pd.DataFr
     mask = _filter_max(result, mask, ["max_drawdown_20d_pct"], filters.max_drawdown_20d_pct_max)
     mask = _filter_min(result, mask, ["atr_20_pct"], filters.atr_20_pct_min)
     mask = _filter_max(result, mask, ["atr_20_pct"], filters.atr_20_pct_max)
+
+    mask = _filter_max(result, mask, ["kdj_j"], filters.kdj_j_max)
+    mask = _filter_min(result, mask, ["kdj_j"], filters.kdj_j_min)
+    mask = _filter_max(result, mask, ["prev_kdj_j"], filters.prev_kdj_j_max)
+    mask = _filter_bool_true(result, mask, "kdj_golden_cross", filters.require_kdj_golden_cross)
+    mask = _filter_bool_true(result, mask, "zg_short_above_long", filters.require_zg_short_above_long)
+    mask = _filter_bool_true(result, mask, "close_above_zg_long", filters.require_close_above_zg_long)
+    mask = _filter_bool_true(result, mask, "close_below_boll_lower", filters.require_close_below_boll_lower)
+    mask = _filter_bool_true(result, mask, "close_above_boll_upper", filters.require_close_above_boll_upper)
+    mask = _filter_max(result, mask, ["daily_amplitude_pct"], filters.daily_amplitude_max)
+    mask = _filter_min(result, mask, ["daily_change_pct"], filters.daily_change_min)
+    mask = _filter_max(result, mask, ["daily_change_pct"], filters.daily_change_max)
+    mask = _filter_bool_true(result, mask, "volume_above_prev", filters.require_volume_above_prev)
+    mask = _filter_bool_true(result, mask, "brick_turn_up", filters.require_brick_turn_up)
 
     mask = _filter_min(result, mask, ["main_inflow_streak"], filters.main_inflow_streak_min)
     mask = _filter_min(result, mask, ["main_net_inflow_5d"], filters.main_net_inflow_5d_min)
@@ -194,6 +221,26 @@ def hard_filter_rejection_summary(
     record_max("max_drawdown_20d_pct_max", ["max_drawdown_20d_pct"], filters.max_drawdown_20d_pct_max)
     record_min("atr_20_pct_min", ["atr_20_pct"], filters.atr_20_pct_min)
     record_max("atr_20_pct_max", ["atr_20_pct"], filters.atr_20_pct_max)
+    record_max("kdj_j_max", ["kdj_j"], filters.kdj_j_max)
+    record_min("kdj_j_min", ["kdj_j"], filters.kdj_j_min)
+    record_max("prev_kdj_j_max", ["prev_kdj_j"], filters.prev_kdj_j_max)
+    if filters.require_kdj_golden_cross:
+        record("require_kdj_golden_cross", _filter_bool_true(df, mask, "kdj_golden_cross", True))
+    if filters.require_zg_short_above_long:
+        record("require_zg_short_above_long", _filter_bool_true(df, mask, "zg_short_above_long", True))
+    if filters.require_close_above_zg_long:
+        record("require_close_above_zg_long", _filter_bool_true(df, mask, "close_above_zg_long", True))
+    if filters.require_close_below_boll_lower:
+        record("require_close_below_boll_lower", _filter_bool_true(df, mask, "close_below_boll_lower", True))
+    if filters.require_close_above_boll_upper:
+        record("require_close_above_boll_upper", _filter_bool_true(df, mask, "close_above_boll_upper", True))
+    record_max("daily_amplitude_max", ["daily_amplitude_pct"], filters.daily_amplitude_max)
+    record_min("daily_change_min", ["daily_change_pct"], filters.daily_change_min)
+    record_max("daily_change_max", ["daily_change_pct"], filters.daily_change_max)
+    if filters.require_volume_above_prev:
+        record("require_volume_above_prev", _filter_bool_true(df, mask, "volume_above_prev", True))
+    if filters.require_brick_turn_up:
+        record("require_brick_turn_up", _filter_bool_true(df, mask, "brick_turn_up", True))
     record_min("main_inflow_streak_min", ["main_inflow_streak"], filters.main_inflow_streak_min)
     record_min("main_net_inflow_5d_min", ["main_net_inflow_5d"], filters.main_net_inflow_5d_min)
     record_min("main_net_inflow_min", ["main_net_inflow"], filters.main_net_inflow_min)
@@ -300,6 +347,26 @@ def hard_filter_waterfall(
     record_max("max_drawdown_20d_pct_max", ["max_drawdown_20d_pct"], filters.max_drawdown_20d_pct_max)
     record_min("atr_20_pct_min", ["atr_20_pct"], filters.atr_20_pct_min)
     record_max("atr_20_pct_max", ["atr_20_pct"], filters.atr_20_pct_max)
+    record_max("kdj_j_max", ["kdj_j"], filters.kdj_j_max)
+    record_min("kdj_j_min", ["kdj_j"], filters.kdj_j_min)
+    record_max("prev_kdj_j_max", ["prev_kdj_j"], filters.prev_kdj_j_max)
+    if filters.require_kdj_golden_cross:
+        record("require_kdj_golden_cross", _filter_bool_true(df, mask, "kdj_golden_cross", True), ["kdj_golden_cross"])
+    if filters.require_zg_short_above_long:
+        record("require_zg_short_above_long", _filter_bool_true(df, mask, "zg_short_above_long", True), ["zg_short_above_long"])
+    if filters.require_close_above_zg_long:
+        record("require_close_above_zg_long", _filter_bool_true(df, mask, "close_above_zg_long", True), ["close_above_zg_long"])
+    if filters.require_close_below_boll_lower:
+        record("require_close_below_boll_lower", _filter_bool_true(df, mask, "close_below_boll_lower", True), ["close_below_boll_lower"])
+    if filters.require_close_above_boll_upper:
+        record("require_close_above_boll_upper", _filter_bool_true(df, mask, "close_above_boll_upper", True), ["close_above_boll_upper"])
+    record_max("daily_amplitude_max", ["daily_amplitude_pct"], filters.daily_amplitude_max)
+    record_min("daily_change_min", ["daily_change_pct"], filters.daily_change_min)
+    record_max("daily_change_max", ["daily_change_pct"], filters.daily_change_max)
+    if filters.require_volume_above_prev:
+        record("require_volume_above_prev", _filter_bool_true(df, mask, "volume_above_prev", True), ["volume_above_prev"])
+    if filters.require_brick_turn_up:
+        record("require_brick_turn_up", _filter_bool_true(df, mask, "brick_turn_up", True), ["brick_turn_up"])
 
     return steps
 

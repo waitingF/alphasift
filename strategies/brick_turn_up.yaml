@@ -1,0 +1,42 @@
+# 砖型图转折向上
+name: brick_turn_up
+display_name: 砖型图转折向上
+description: 通达信砖型图 XG：昨日绿柱 + 今日红柱 + 高度达标 + ZG 多头 + 涨幅<=5%
+version: "1.0"
+category: momentum
+tags: [brick, zg, daily_k, reversal]
+style:
+  risk_profile: balanced
+  holding_period: swing
+  execution_style: reversal
+  market_regime: [range_bound, trend_up]
+  capital_profile: medium_liquidity
+  ui_badge: 砖型
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 50000000
+    require_brick_turn_up: true
+  tech_weight: 0.48
+  factor_weights:
+    momentum: 0.30
+    reversal: 0.28
+    stability: 0.22
+    activity: 0.20
+  scoring_profile:
+    activity_ideal_volume_ratio: 1.8
+    momentum_intraday_slope: 1.0
+  risk_profile:
+    chase_change_pct: 7.0
+    weak_signal_score: 35.0
+  portfolio_profile:
+    max_same_bucket: 2
+    concentration_penalty: 3.0
+  ranking_hints: |
+    优先关注：
+    1. 砖型图由绿转红且红柱高度覆盖昨日绿柱
+    2. ZG 短期在长期之上，当日涨幅不超过 5%
+  max_output: 15

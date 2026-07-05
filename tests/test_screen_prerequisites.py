@@ -93,6 +93,28 @@ def test_validate_screen_prerequisites_passes_when_stores_exist(tmp_path: Path):
     )
 
 
+def test_screen_b1_main_inflow_5d_fails_fast_without_flow_store(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "alphasift.pipeline.fetch_snapshot_with_fallback",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not fetch snapshot")),
+    )
+
+    with pytest.raises(ScreenPrerequisitesError, match="b1_main_inflow_5d"):
+        screen(
+            "b1_main_inflow_5d",
+            use_llm=False,
+            config=Config(
+                llm_api_key="",
+                snapshot_source_priority=["test"],
+                strategies_dir=Path("strategies"),
+                data_dir=tmp_path / "data",
+                flow_bars_dir=tmp_path / "data" / "flow_bars",
+                daily_bars_dir=tmp_path / "data" / "daily_bars",
+                risk_enabled=False,
+            ),
+        )
+
+
 def test_screen_main_inflow_momentum_fails_fast_without_prerequisites(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "alphasift.pipeline.fetch_snapshot_with_fallback",

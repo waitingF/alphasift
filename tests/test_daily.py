@@ -55,7 +55,7 @@ def test_compute_daily_features_adds_trend_fields():
     assert float(features["max_drawdown_20d_pct"]) <= 0
     assert float(features["atr_20_pct"]) > 0
     assert features["daily_quality_score"] == 100.0
-    assert features["daily_quality_flags"] == ""
+    assert "zg_insufficient_bars" in str(features["daily_quality_flags"])
 
 
 def test_compute_daily_features_flags_short_stale_fallback_history():
@@ -631,9 +631,14 @@ def test_enrich_daily_features_keeps_successful_rows_when_one_fetch_fails(monkey
     assert result.loc[0, "daily_data_points"] == 80
     assert result.loc[0, "daily_source"] == "akshare"
     assert result.loc[0, "daily_quality_score"] == 88.0
-    assert result.loc[0, "daily_quality_flags"] == "missing_volume"
+    assert "missing_volume" in str(result.loc[0, "daily_quality_flags"])
+    assert "zg_insufficient_bars" in str(result.loc[0, "daily_quality_flags"])
     assert result.attrs["daily_source_counts"] == {"akshare": 1}
-    assert result.attrs["daily_quality_flag_counts"] == {"missing_volume": 1, "fetch_failed": 1}
+    assert result.attrs["daily_quality_flag_counts"] == {
+        "missing_volume": 1,
+        "zg_insufficient_bars": 1,
+        "fetch_failed": 1,
+    }
     assert result.attrs["daily_source_order_notes"] == ["daily source order adjusted by health: akshare"]
     assert result.attrs["daily_source_health"] == {"akshare": {"successes": 1.0}}
     assert pd.isna(result.loc[1, "daily_data_points"])

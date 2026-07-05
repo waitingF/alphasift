@@ -464,6 +464,22 @@ def main():
     drp.add_argument("--json", action="store_true", help="以 JSON 输出")
     drp.add_argument("--explain", action="store_true", help="输出紧凑可读摘要")
 
+    # pattern-search
+    ps = sub.add_parser("pattern-search", help="基于本地 daily-bars 的形态相似度检索")
+    ps.add_argument(
+        "--query-json",
+        required=True,
+        help='query K 线 JSON 文件，格式 {"bars":[{"date","open","high","low","close","volume"},...]}',
+    )
+    ps.add_argument("--metric", default="euclidean", help="相似度度量：euclidean/manhattan/chebyshev/dtw/pearson/spearman/cosine")
+    ps.add_argument("--top", type=int, default=20, help="返回 Top N 匹配")
+    ps.add_argument("--daily-bars-dir", default=None, help="daily-bars 根目录，默认 DAILY_BARS_DIR")
+    ps.add_argument("--codes", default=None, help="限定候选 ts_code，逗号分隔")
+    ps.add_argument("--exclude-codes", default=None, help="排除 ts_code，逗号分隔")
+    ps.add_argument("--lookback-days", type=int, default=200, help="每只候选读取的历史 K 线天数")
+    ps.add_argument("--max-workers", type=int, default=4, help="并行扫描线程数")
+    ps.add_argument("--json", action="store_true", help="以 JSON 输出")
+
     # quickstart
     qp = sub.add_parser(
         "quickstart",
@@ -994,6 +1010,42 @@ def main():
 
     elif args.command == "quickstart":
         _run_quickstart(strategy=args.strategy, max_output=args.max_output)
+
+    elif args.command == "pattern-search":
+        config = Config.from_env()
+        daily_bars_dir = args.daily_bars_dir or config.daily_bars_dir
+        if daily_bars_dir is None:
+            print("pattern-search 需要 daily-bars 本地库；请设置 DAILY_BARS_DIR 或 --daily-bars-dir", file=sys.stderr)
+            sys.exit(2)
+        query_path = Path(args.query_json)
+        if not query_path.is_file():
+            print(f"query json not found: {query_path}", file=sys.stderr)
+            sys.exit(2)
+        payload = json.loads(query_path.read_text(encoding="utf-8"))
+        query_bars = payload.get("bars") if isinstance(payload, dict) else payload
+        if not isinstance(query_bars, list) or not query_bars:
+            print("query json must contain a non-empty bars array", file=sys.stderr)
+            sys.exit(2)
+        from alphasift.pattern.search import search_pattern
+
+        try:
+            result = search_pattern(
+                query_bars,
+                daily_bars_dir=daily_bars_dir,
+                metric=args.metric,
+                top_k=max(int(args.top), 1),
+                codes=_split_csv_args(args.codes),
+                exclude_codes=_split_csv_args(args.exclude_codes),
+                lookback_days=max(int(args.lookback_days), 20),
+                max_workers=max(int(args.max_workers), 1),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
 
     else:
         parser.print_help()

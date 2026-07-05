@@ -1,0 +1,47 @@
+# B2 — 昨日超卖 + 今日放量上涨
+name: b2
+display_name: B2（昨日超卖 + 今日放量上涨）
+description: 昨日 KDJ.J<13 + 今日涨幅>3.95% + 放量 + 当日 J<80 + ZG 多头 + 收盘>长期线
+version: "1.0"
+category: momentum
+tags: [b2, kdj, zg, daily_k, breakout]
+style:
+  risk_profile: aggressive
+  holding_period: short_term
+  execution_style: trend_following
+  market_regime: [trend_up, momentum]
+  capital_profile: medium_liquidity
+  ui_badge: B2
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 50000000
+    prev_kdj_j_max: 13
+    daily_change_min: 3.95
+    require_volume_above_prev: true
+    kdj_j_max: 80
+    require_zg_short_above_long: true
+    require_close_above_zg_long: true
+  tech_weight: 0.50
+  factor_weights:
+    momentum: 0.35
+    reversal: 0.25
+    activity: 0.20
+    stability: 0.20
+  scoring_profile:
+    momentum_intraday_slope: 1.2
+    activity_ideal_volume_ratio: 2.0
+  risk_profile:
+    chase_change_pct: 9.5
+    abnormal_volume_ratio: 6.0
+  portfolio_profile:
+    max_same_bucket: 2
+    concentration_penalty: 4.0
+  ranking_hints: |
+    优先关注：
+    1. 昨日超卖、今日放量突破
+    2. ZG 多头且收盘在长期趋势线之上
+  max_output: 15

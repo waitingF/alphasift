@@ -1,0 +1,44 @@
+# 长期趋势线上的 B1
+name: b1_above_long
+display_name: 长期趋势线上的B1
+description: 常规 B1 + 收盘价站在 ZG 长期趋势线之上
+version: "1.0"
+category: reversal
+tags: [b1, kdj, zg, daily_k, trend]
+style:
+  risk_profile: balanced
+  holding_period: swing
+  execution_style: reversal
+  market_regime: [oversold_repair, trend_up]
+  capital_profile: medium_liquidity
+  ui_badge: B1+
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 50000000
+    kdj_j_max: 13
+    require_zg_short_above_long: true
+    require_close_above_zg_long: true
+  tech_weight: 0.42
+  factor_weights:
+    reversal: 0.30
+    momentum: 0.28
+    stability: 0.22
+    liquidity: 0.20
+  scoring_profile:
+    reversal_ideal_change_pct: -1.0
+    rsi_oversold_bonus: 10.0
+  risk_profile:
+    chase_change_pct: 7.0
+    weak_signal_score: 35.0
+  portfolio_profile:
+    max_same_bucket: 2
+    concentration_penalty: 3.0
+  ranking_hints: |
+    优先关注：
+    1. 满足 B1 超卖 + ZG 多头
+    2. 收盘价已站上 ZG 长期趋势线，趋势确认更强
+  max_output: 20

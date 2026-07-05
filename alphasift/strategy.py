@@ -850,6 +850,21 @@ def _required_daily_fields(filters_config: HardFilterConfig) -> list[str]:
             or filters_config.max_drawdown_20d_pct_max is not None,
         ),
         ("atr_20_pct", filters_config.atr_20_pct_min is not None or filters_config.atr_20_pct_max is not None),
+        ("kdj_j", filters_config.kdj_j_max is not None or filters_config.kdj_j_min is not None),
+        ("prev_kdj_j", filters_config.prev_kdj_j_max is not None),
+        ("kdj_golden_cross", filters_config.require_kdj_golden_cross),
+        ("zg_short_above_long", filters_config.require_zg_short_above_long),
+        ("close_above_zg_long", filters_config.require_close_above_zg_long),
+        ("close_below_boll_lower", filters_config.require_close_below_boll_lower),
+        ("close_above_boll_upper", filters_config.require_close_above_boll_upper),
+        ("daily_amplitude_pct", filters_config.daily_amplitude_max is not None),
+        (
+            "daily_change_pct",
+            filters_config.daily_change_min is not None
+            or filters_config.daily_change_max is not None,
+        ),
+        ("volume_above_prev", filters_config.require_volume_above_prev),
+        ("brick_turn_up", filters_config.require_brick_turn_up),
     ]
     return [field for field, enabled in checks if enabled]
 
