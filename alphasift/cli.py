@@ -1016,11 +1016,20 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
-def _format_daily_bars_status_explain(summary: dict[str, object]) -> str:
+def _resolve_tushare_token() -> str:
+    return os.getenv("TUSHARE_TOKEN", "").strip() or os.getenv("TUSHARE_API_TOKEN", "").strip()
+
+
+def _format_bars_status_explain(
+    summary: dict[str, object],
+    *,
+    files_label: str,
+    files_key: str,
+) -> str:
     lines = [
         f"root={summary.get('root')}",
         f"last_trade_date={summary.get('last_trade_date') or '-'}",
-        f"code_count={summary.get('code_count', 0)} raw_files={summary.get('raw_file_count', 0)}",
+        f"code_count={summary.get('code_count', 0)} {files_label}={summary.get(files_key, 0)}",
     ]
     if summary.get("stale_vs_effective"):
         lines.append(
@@ -1048,13 +1057,31 @@ def _format_daily_bars_status_explain(summary: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _run_daily_bars_command(args, config: Config) -> int:
-    import os
+def _print_bars_status(args, summary: dict[str, object], *, files_label: str, files_key: str) -> None:
+    if getattr(args, "explain", False):
+        print(_format_bars_status_explain(summary, files_label=files_label, files_key=files_key))
+    else:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
 
+
+def _print_sync_stats(stats) -> None:
+    print(json.dumps({
+        "added_rows": stats.added_rows,
+        "updated_codes": stats.updated_codes,
+        "rebuilt_codes": stats.rebuilt_codes,
+        "failed_codes": stats.failed_codes,
+        "source_errors": stats.source_errors,
+        "api_attempts": stats.api_attempts,
+        "api_retries": stats.api_retries,
+        "api_failures": stats.api_failures,
+    }, ensure_ascii=False, indent=2))
+
+
+def _run_daily_bars_command(args, config: Config) -> int:
     from alphasift.daily_store import DailyBarStore
     from alphasift.daily_sync import fetch_daily_bars, init_daily_bars, status_daily_bars, sync_daily_bars
 
-    token = os.getenv("TUSHARE_TOKEN", "").strip() or os.getenv("TUSHARE_API_TOKEN", "").strip()
+    token = _resolve_tushare_token()
     store = DailyBarStore(config.daily_bars_dir, adj=os.getenv("TUSHARE_DAILY_ADJ", "qfq"))
     rps = (
         args.requests_per_second
@@ -1064,11 +1091,12 @@ def _run_daily_bars_command(args, config: Config) -> int:
 
     if args.daily_bars_command == "status":
         effective = os.getenv("TUSHARE_TRADE_DATE", "").strip() or None
-        summary = status_daily_bars(store, effective_trade_date=effective)
-        if getattr(args, "explain", False):
-            print(_format_daily_bars_status_explain(summary))
-        else:
-            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        _print_bars_status(
+            args,
+            status_daily_bars(store, effective_trade_date=effective),
+            files_label="raw_files",
+            files_key="raw_file_count",
+        )
         return 0
 
     if not token:
@@ -1113,55 +1141,15 @@ def _run_daily_bars_command(args, config: Config) -> int:
     else:
         return 1
 
-    print(json.dumps({
-        "added_rows": stats.added_rows,
-        "updated_codes": stats.updated_codes,
-        "rebuilt_codes": stats.rebuilt_codes,
-        "failed_codes": stats.failed_codes,
-        "source_errors": stats.source_errors,
-        "api_attempts": stats.api_attempts,
-        "api_retries": stats.api_retries,
-        "api_failures": stats.api_failures,
-    }, ensure_ascii=False, indent=2))
+    _print_sync_stats(stats)
     return 1 if stats.failed_codes or stats.source_errors else 0
 
 
-def _format_flow_bars_status_explain(summary: dict[str, object]) -> str:
-    lines = [
-        f"root={summary.get('root')}",
-        f"last_trade_date={summary.get('last_trade_date') or '-'}",
-        f"code_count={summary.get('code_count', 0)} moneyflow_files={summary.get('moneyflow_file_count', 0)}",
-    ]
-    if summary.get("stale_vs_effective"):
-        lines.append("stale: local store is behind snapshot effective trade date")
-    if summary.get("ahead_of_effective"):
-        lines.append("ahead: local store is newer than snapshot effective trade date")
-    in_progress = summary.get("in_progress")
-    if isinstance(in_progress, dict) and in_progress:
-        lines.append(
-            "in_progress: "
-            f"{in_progress.get('next_index')}/{in_progress.get('total_symbols')} "
-            f"({in_progress.get('percent_complete')}%) "
-            f"updated={in_progress.get('updated')} skipped={in_progress.get('skipped')} "
-            f"failed={in_progress.get('failed')} last={in_progress.get('last_symbol')}"
-        )
-        lines.append(f"progress_file={in_progress.get('path')}")
-    manifest_error = summary.get("manifest_error")
-    if manifest_error:
-        lines.append(f"manifest_error={manifest_error}")
-    failed = summary.get("failed_codes") or []
-    if failed:
-        lines.append(f"failed_codes={len(failed)} sample={failed[:5]}")
-    return "\n".join(lines)
-
-
 def _run_flow_bars_command(args, config: Config) -> int:
-    import os
-
     from alphasift.flow_store import FlowBarStore
     from alphasift.flow_sync import init_flow_bars, status_flow_bars, sync_flow_bars
 
-    token = os.getenv("TUSHARE_TOKEN", "").strip() or os.getenv("TUSHARE_API_TOKEN", "").strip()
+    token = _resolve_tushare_token()
     store = FlowBarStore(config.flow_bars_dir)
     rps = (
         args.requests_per_second
@@ -1171,11 +1159,12 @@ def _run_flow_bars_command(args, config: Config) -> int:
 
     if args.flow_bars_command == "status":
         effective = os.getenv("TUSHARE_TRADE_DATE", "").strip() or None
-        summary = status_flow_bars(store, effective_trade_date=effective)
-        if getattr(args, "explain", False):
-            print(_format_flow_bars_status_explain(summary))
-        else:
-            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        _print_bars_status(
+            args,
+            status_flow_bars(store, effective_trade_date=effective),
+            files_label="moneyflow_files",
+            files_key="moneyflow_file_count",
+        )
         return 0
 
     if not token:
@@ -1211,16 +1200,7 @@ def _run_flow_bars_command(args, config: Config) -> int:
     else:
         return 1
 
-    print(json.dumps({
-        "added_rows": stats.added_rows,
-        "updated_codes": stats.updated_codes,
-        "rebuilt_codes": stats.rebuilt_codes,
-        "failed_codes": stats.failed_codes,
-        "source_errors": stats.source_errors,
-        "api_attempts": stats.api_attempts,
-        "api_retries": stats.api_retries,
-        "api_failures": stats.api_failures,
-    }, ensure_ascii=False, indent=2))
+    _print_sync_stats(stats)
     return 1 if stats.failed_codes or stats.source_errors else 0
 
 

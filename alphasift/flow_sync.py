@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 
 import pandas as pd
 
@@ -17,9 +16,17 @@ from alphasift.daily_sync import (
     SyncStats,
     TushareSyncClient,
     _SymbolProgressBar,
+    _delete_progress,
+    _init_start_date,
+    _latest_trade_date,
+    _load_or_reset_progress,
     _load_universe,
     _make_sync_client,
+    _maybe_save_progress,
+    _progress_path,
     _read_trade_cal_dates,
+    _save_progress,
+    build_store_status_summary,
 )
 from alphasift.daily_store import normalize_date_yyyymmdd, require_pyarrow
 from alphasift.flow_specs import MONEYFLOW_FIELDS
@@ -215,58 +222,13 @@ def sync_flow_bars(
 
 
 def status_flow_bars(store: FlowBarStore, *, effective_trade_date: str | None = None) -> dict[str, object]:
-    manifest: dict[str, object] = {}
-    manifest_error: str | None = None
-    try:
-        manifest = store.manifest()
-    except Exception as exc:  # noqa: BLE001
-        manifest_error = str(exc)
-
-    last = normalize_date_yyyymmdd(str(manifest.get("last_trade_date", "")))
-    effective = normalize_date_yyyymmdd(effective_trade_date)
-    stale = bool(effective and last and last < effective)
-    ahead = bool(effective and last and last > effective)
-    in_progress = load_sync_progress(store)
     file_count = len(store.list_codes())
-    return {
-        "root": str(store.root),
-        "manifest": manifest,
-        "manifest_error": manifest_error,
-        "last_trade_date": last,
-        "effective_trade_date": effective,
-        "stale_vs_effective": stale,
-        "ahead_of_effective": ahead,
-        "code_count": manifest.get("code_count", file_count),
-        "moneyflow_file_count": file_count,
-        "failed_codes": list((manifest.get("sync_stats") or {}).get("failed_codes", [])),
-        "in_progress": in_progress,
-    }
-
-
-def load_sync_progress(store: FlowBarStore, progress_dir: Path | None = None) -> dict[str, object] | None:
-    path = _progress_path(store, progress_dir)
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    total = len(payload.get("symbols") or [])
-    next_index = int(payload.get("next_index", 0))
-    percent = round(next_index / total * 100, 2) if total else 0.0
-    return {
-        "path": str(path),
-        "signature": payload.get("signature"),
-        "next_index": next_index,
-        "total_symbols": total,
-        "percent_complete": percent,
-        "updated": int(payload.get("updated", 0)),
-        "skipped": int(payload.get("skipped", 0)),
-        "failed": int(payload.get("failed", 0)),
-        "last_symbol": payload.get("last_symbol", ""),
-        "api_stats": payload.get("api_stats", {}),
-        "recent_errors": list(payload.get("errors") or [])[-5:],
-    }
+    return build_store_status_summary(
+        store,
+        effective_trade_date=effective_trade_date,
+        file_count=file_count,
+        file_count_key="moneyflow_file_count",
+    )
 
 
 def _fetch_and_replace_code(
@@ -288,72 +250,6 @@ def _fetch_and_replace_code(
         raise RuntimeError("empty moneyflow")
     store.write(ts_code, raw)
     return len(raw)
-
-
-def _init_start_date(list_date: object, end: str, lookback_days: int) -> str:
-    end_dt = datetime.strptime(end, "%Y%m%d").date()
-    window_start = (end_dt - timedelta(days=max(int(lookback_days), 30))).strftime("%Y%m%d")
-    if list_date:
-        list_norm = normalize_date_yyyymmdd(str(list_date))
-        if list_norm and list_norm > window_start:
-            return list_norm
-    return window_start
-
-
-def _latest_trade_date(client: TushareSyncClient) -> str:
-    end = date.today()
-    start = end - timedelta(days=30)
-    dates = _read_trade_cal_dates(
-        client,
-        start_date=start.strftime("%Y%m%d"),
-        end_date=end.strftime("%Y%m%d"),
-    )
-    return dates[-1]
-
-
-def _progress_path(store: FlowBarStore, progress_dir: Path | None) -> Path:
-    base = progress_dir or store.root / "meta"
-    return base / "sync_progress.json"
-
-
-def _load_or_reset_progress(path: Path, signature: dict[str, object], reset: bool) -> SyncProgress:
-    if reset or not path.is_file():
-        return SyncProgress(signature=signature)
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    progress = SyncProgress.from_dict(payload)
-    if progress.signature != signature:
-        return SyncProgress(signature=signature)
-    return progress
-
-
-def _save_progress(path: Path, progress: SyncProgress, client: TushareSyncClient) -> None:
-    progress.api_stats = dict(client.stats)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(progress.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _delete_progress(path: Path) -> None:
-    if path.is_file():
-        path.unlink()
-
-
-def _maybe_save_progress(
-    path: Path,
-    progress: SyncProgress,
-    client: TushareSyncClient,
-    last_save: float,
-    *,
-    save_every: int,
-    save_interval: float,
-) -> float:
-    now = time.monotonic()
-    if progress.updated and progress.updated % save_every == 0:
-        _save_progress(path, progress, client)
-        return now
-    if now - last_save >= save_interval:
-        _save_progress(path, progress, client)
-        return now
-    return last_save
 
 
 def _finalize_manifest(

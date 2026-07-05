@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from alphasift.daily import _configure_tushare_client
 from alphasift.daily_store import (
@@ -31,6 +31,16 @@ _TRANSIENT_PATTERNS = (
     "请稍后再试",
     "too many requests",
 )
+
+
+class _LocalStoreRoot(Protocol):
+    root: Path
+
+
+class _LocalStoreWithManifest(Protocol):
+    root: Path
+
+    def manifest(self) -> dict[str, object]: ...
 
 
 @dataclass
@@ -518,6 +528,23 @@ def fetch_daily_bars(
 
 
 def status_daily_bars(store: DailyBarStore, *, effective_trade_date: str | None = None) -> dict[str, object]:
+    raw_dir = store.root / "bars" / "raw"
+    raw_count = len(list(raw_dir.glob("*.parquet"))) if raw_dir.is_dir() else 0
+    return build_store_status_summary(
+        store,
+        effective_trade_date=effective_trade_date,
+        file_count=raw_count,
+        file_count_key="raw_file_count",
+    )
+
+
+def build_store_status_summary(
+    store: _LocalStoreWithManifest,
+    *,
+    effective_trade_date: str | None,
+    file_count: int,
+    file_count_key: str,
+) -> dict[str, object]:
     manifest: dict[str, object] = {}
     manifest_error: str | None = None
     try:
@@ -530,11 +557,6 @@ def status_daily_bars(store: DailyBarStore, *, effective_trade_date: str | None 
     stale = bool(effective and last and last < effective)
     ahead = bool(effective and last and last > effective)
     in_progress = load_sync_progress(store)
-    raw_count = (
-        len(list((store.root / "bars" / "raw").glob("*.parquet")))
-        if (store.root / "bars" / "raw").is_dir()
-        else 0
-    )
     return {
         "root": str(store.root),
         "manifest": manifest,
@@ -543,8 +565,8 @@ def status_daily_bars(store: DailyBarStore, *, effective_trade_date: str | None 
         "effective_trade_date": effective,
         "stale_vs_effective": stale,
         "ahead_of_effective": ahead,
-        "code_count": manifest.get("code_count", raw_count),
-        "raw_file_count": raw_count,
+        "code_count": manifest.get("code_count", file_count),
+        file_count_key: file_count,
         "failed_codes": list((manifest.get("sync_stats") or {}).get("failed_codes", [])),
         "in_progress": in_progress,
     }
@@ -663,7 +685,7 @@ def _read_trade_cal_dates(
     return dates
 
 
-def _progress_path(store: DailyBarStore, progress_dir: Path | None) -> Path:
+def _progress_path(store: _LocalStoreRoot, progress_dir: Path | None) -> Path:
     base = progress_dir or store.root / "meta"
     return base / "sync_progress.json"
 
@@ -751,7 +773,7 @@ def _is_transient_error(exc: Exception) -> bool:
     )
 
 
-def load_sync_progress(store: DailyBarStore, progress_dir: Path | None = None) -> dict[str, object] | None:
+def load_sync_progress(store: _LocalStoreRoot, progress_dir: Path | None = None) -> dict[str, object] | None:
     path = _progress_path(store, progress_dir)
     if not path.is_file():
         return None
