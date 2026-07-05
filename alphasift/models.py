@@ -70,6 +70,18 @@ class ScreeningConfig:
 
 
 @dataclass
+class StrategyStyle:
+    """Human/UI-facing strategy style metadata."""
+
+    risk_profile: str = ""
+    holding_period: str = ""
+    execution_style: str = ""
+    market_regime: list[str] = field(default_factory=list)
+    capital_profile: str = ""
+    ui_badge: str = ""
+
+
+@dataclass
 class Strategy:
     name: str
     display_name: str
@@ -77,6 +89,7 @@ class Strategy:
     version: str = "1"
     category: str = "trend"
     tags: list[str] = field(default_factory=list)
+    style: StrategyStyle = field(default_factory=StrategyStyle)
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
 
 
@@ -90,6 +103,14 @@ class StrategyInfo:
     category: str
     tags: list[str]
     market_scope: list[str]
+    requires_daily_features: bool = False
+    data_requirements: list[str] = field(default_factory=list)
+    required_snapshot_fields: list[str] = field(default_factory=list)
+    required_daily_fields: list[str] = field(default_factory=list)
+    active_filters: list[str] = field(default_factory=list)
+    factor_weights: dict[str, float] = field(default_factory=dict)
+    profile_keys: dict[str, list[str]] = field(default_factory=dict)
+    style: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -233,6 +254,9 @@ class PickEvaluation:
     llm_sector: str = ""
     llm_theme: str = ""
     llm_tags: list[str] = field(default_factory=list)
+    llm_catalysts: list[str] = field(default_factory=list)
+    llm_risks: list[str] = field(default_factory=list)
+    post_analysis_tags: list[str] = field(default_factory=list)
     risk_level: str = ""
     risk_flags: list[str] = field(default_factory=list)
     portfolio_flags: list[str] = field(default_factory=list)
