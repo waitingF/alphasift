@@ -13,6 +13,11 @@ from typing import Any
 
 import pandas as pd
 
+from alphasift.akshare_boards import (
+    board_leader_change_pct,
+    board_leader_name,
+    fetch_board_list_frame,
+)
 from alphasift.industry import (
     _board_heat_score,
     _normalize_code,
@@ -140,6 +145,7 @@ class HotspotResults(list[HotspotSummary]):
         self.provider_used = provider_used
         self.fallback_used = fallback_used
         self.source_errors = _dedupe_errors(source_errors or [])
+        self.fallback_notes: list[str] = []
         self.stale = stale
         self.stale_age_hours = stale_age_hours
 
@@ -302,17 +308,20 @@ def discover_hotspots(
     provider_chain = _resolve_provider_chain(provider, source_errors)
     provider_used = ""
     rows: list[dict[str, Any]] = []
+    board_context: dict[str, object] = {}
 
     for label, provider_obj in provider_chain:
         provider_used = label or provider_used
         if provider_obj is None:
             continue
         error_count = len(source_errors)
+        board_context = {}
         rows = _load_board_summaries(
             provider_obj,
             max_boards=max_boards,
             source_errors=source_errors,
             provider_label=label,
+            board_context=board_context,
         )
         if rows:
             provider_used = label
@@ -377,12 +386,13 @@ def discover_hotspots(
     ranked = sorted(summaries, key=_hotspot_sort_key, reverse=True)[:max(int(top), 0)]
     for summary in ranked:
         provider_obj = next((obj for label, obj in provider_chain if label == provider_used), None)
-        stocks = _load_scored_constituents(
+        stocks = _load_hotspot_constituents(
             provider_obj,
             summary.topic,
             source=summary.source,
             source_errors=source_errors,
             provider_label=provider_used,
+            board_context=board_context,
         ) if provider_obj is not None else []
         summary.sample_stock_count = len(stocks)
         _set_summary_leaders(summary, stocks)
@@ -399,7 +409,7 @@ def discover_hotspots(
                 _add_missing_fields(summary, ["live_stocks"])
             else:
                 _add_missing_fields(summary, ["stocks", "leader_stocks"])
-    return _with_result_metadata(
+    result = _with_result_metadata(
         ranked,
         provider_used=provider_used,
         fallback_used=False,
@@ -407,6 +417,10 @@ def discover_hotspots(
         stale=False,
         stale_age_hours=None,
     )
+    fallback_notes = board_context.get("fallback_notes")
+    if isinstance(fallback_notes, list):
+        result.fallback_notes = [_safe_text(note) for note in fallback_notes if _safe_text(note)]
+    return result
 
 
 def get_hotspot_detail(
@@ -825,6 +839,63 @@ def _load_board_summaries(
     max_boards: int,
     source_errors: list[str] | None = None,
     provider_label: str = "",
+    board_context: dict[str, object] | None = None,
+) -> list[dict[str, Any]]:
+    if isinstance(provider, dict):
+        return _load_board_summaries_from_mapping(
+            provider,
+            max_boards=max_boards,
+            source_errors=source_errors,
+            provider_label=provider_label,
+        )
+    if not _is_live_akshare_provider(provider):
+        return _load_board_summaries_from_provider(
+            provider,
+            max_boards=max_boards,
+            source_errors=source_errors,
+            provider_label=provider_label,
+        )
+
+    rows: list[dict[str, Any]] = []
+    backends: dict[str, str] = {}
+    ths_frames: dict[str, pd.DataFrame] = {}
+    fallback_notes: list[str] = []
+    limit = max(int(max_boards), 1)
+    for source, board_kind in (("concept", "concept"), ("industry", "industry")):
+        frame, backend, note = fetch_board_list_frame(board_kind)
+        if frame is None:
+            _record_provider_error(
+                source_errors,
+                provider_label or "akshare",
+                f"{board_kind}_boards",
+                RuntimeError(note or "board list unavailable"),
+            )
+            continue
+        if backend == "ths":
+            ths_frames[source] = frame
+        if note:
+            fallback_notes.append(note)
+        backends[source] = backend or "unknown"
+        rows.extend(_normalize_board_rows(frame, source=source)[:limit])
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        topic = row["topic"]
+        existing = deduped.get(topic)
+        if existing is None or _board_row_rank_key(row) > _board_row_rank_key(existing):
+            deduped[topic] = row
+    if board_context is not None:
+        board_context["backends"] = backends
+        board_context["ths_frames"] = ths_frames
+        board_context["fallback_notes"] = fallback_notes
+    return sorted(deduped.values(), key=_board_row_rank_key, reverse=True)
+
+
+def _load_board_summaries_from_provider(
+    provider: object,
+    *,
+    max_boards: int,
+    source_errors: list[str] | None = None,
+    provider_label: str = "",
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     specs = [
@@ -840,7 +911,28 @@ def _load_board_summaries(
             provider_label=provider_label,
         )
         if frame is None:
-            frame = _mapping_provider_frame(provider, f"{source}_boards")
+            continue
+        rows.extend(_normalize_board_rows(frame, source=source)[:limit])
+    deduped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        topic = row["topic"]
+        existing = deduped.get(topic)
+        if existing is None or _board_row_rank_key(row) > _board_row_rank_key(existing):
+            deduped[topic] = row
+    return sorted(deduped.values(), key=_board_row_rank_key, reverse=True)
+
+
+def _load_board_summaries_from_mapping(
+    provider: dict[str, object],
+    *,
+    max_boards: int,
+    source_errors: list[str] | None = None,
+    provider_label: str = "",
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    limit = max(int(max_boards), 1)
+    for source in ("concept", "industry"):
+        frame = _mapping_provider_frame(provider, f"{source}_boards")
         if frame is None:
             continue
         rows.extend(_normalize_board_rows(frame, source=source)[:limit])
@@ -853,6 +945,10 @@ def _load_board_summaries(
     return sorted(deduped.values(), key=_board_row_rank_key, reverse=True)
 
 
+def _is_live_akshare_provider(provider: object) -> bool:
+    return getattr(provider, "__name__", "") == "akshare"
+
+
 def _normalize_board_rows(frame: pd.DataFrame, *, source: str) -> list[dict[str, Any]]:
     if frame is None or frame.empty:
         return []
@@ -861,6 +957,7 @@ def _normalize_board_rows(frame: pd.DataFrame, *, source: str) -> list[dict[str,
         topic = _safe_text(_row_value(row, [
             "topic",
             "board",
+            "board_name",
             "板块名称",
             "概念名称",
             "行业名称",
@@ -908,6 +1005,44 @@ def _find_board_summary_in_rows(rows: list[dict[str, Any]], topic: str) -> dict[
         if _normalize_topic_key(row.get("topic")) == topic_key:
             return row
     return None
+
+
+def _load_hotspot_constituents(
+    provider: object,
+    topic: str,
+    *,
+    source: str,
+    source_errors: list[str] | None = None,
+    provider_label: str = "",
+    board_context: dict[str, object] | None = None,
+) -> list[HotspotStock]:
+    backends = board_context.get("backends") if board_context else {}
+    ths_frames = board_context.get("ths_frames") if board_context else {}
+    backend = _safe_text((backends or {}).get(source))
+    if backend == "ths":
+        ths_frame = (ths_frames or {}).get(source)
+        if isinstance(ths_frame, pd.DataFrame):
+            leader = board_leader_name(ths_frame, topic)
+            if leader:
+                stock = HotspotStock(
+                    code="",
+                    name=leader,
+                    change_pct=board_leader_change_pct(ths_frame, topic),
+                    role="核心龙头",
+                    source=f"{provider_label or 'akshare'}.ths_leader",
+                    source_confidence=0.75,
+                    fallback_used=True,
+                )
+                stock.hot_stock_score = score_hotspot_stock(asdict(stock))
+                return [stock]
+        return []
+    return _load_scored_constituents(
+        provider,
+        topic,
+        source=source,
+        source_errors=source_errors,
+        provider_label=provider_label,
+    )
 
 
 def _load_scored_constituents(

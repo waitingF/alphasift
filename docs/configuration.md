@@ -139,6 +139,31 @@ alphasift flow-bars status [--explain]
 
 完整说明见 [board-flow-guide.md](board-flow-guide.md)。
 
+## 串行数据更新（data-update）
+
+按顺序刷新本地可更新数据，无需分别手动调用各子命令：
+
+```text
+daily-bars (sync/init) → flow-bars (sync/init) → industry-cache → hotspot-cache
+```
+
+| 步骤 | 依赖 | 默认输出 |
+|------|------|----------|
+| daily-bars | `TUSHARE_TOKEN` | `${ALPHASIFT_DATA_DIR}/daily_bars` |
+| flow-bars | `TUSHARE_TOKEN` | `${ALPHASIFT_DATA_DIR}/flow_bars` |
+| industry-cache | AkShare 网络 | `${ALPHASIFT_DATA_DIR}/industry_map.csv` 或 `INDUSTRY_MAP_FILES[0]` |
+| hotspot-cache | AkShare 网络 | `${ALPHASIFT_DATA_DIR}/hotspots.json` |
+
+CLI：
+
+```bash
+alphasift data-update [--explain] [--json]
+alphasift data-update --skip-hotspot --skip-industry   # 仅 Tushare 库
+alphasift data-update --no-init-if-missing             # 库不存在则跳过，不自动 init
+```
+
+任一步骤失败会中止后续步骤；缺少 `TUSHARE_TOKEN` 时跳过 daily/flow 并继续 industry/hotspot。
+
 ## 板块主力流排行（board-flow）
 
 | 变量 | 默认 | 说明 |

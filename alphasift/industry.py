@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from alphasift.akshare_boards import fetch_board_list_frame
 from alphasift.normalize import (
     normalize_code as _normalize_code,
     safe_float as _safe_float,
@@ -210,16 +211,20 @@ def fetch_akshare_board_map(
 
     mapping: dict[str, dict[str, object]] = {}
     board_specs = [
-        ("industry", ak.stock_board_industry_name_em, ak.stock_board_industry_cons_em),
-        ("concepts", ak.stock_board_concept_name_em, ak.stock_board_concept_cons_em),
+        ("industry", "industry", ak.stock_board_industry_cons_em),
+        ("concepts", "concept", ak.stock_board_concept_cons_em),
     ]
-    for field, list_func, cons_func in board_specs:
-        try:
-            boards = list_func()
-        except Exception as exc:
-            notes.append(f"akshare {field} board list failed: {exc}")
+    for field, board_kind, cons_func in board_specs:
+        frame, backend, note = fetch_board_list_frame(board_kind)
+        if note:
+            notes.append(note.replace(f"akshare {board_kind}", f"akshare {field}"))
+        if frame is None:
+            notes.append(f"akshare {field} board list failed: {note or 'board list unavailable'}")
             continue
-        board_items = _board_items(boards)[:board_limit]
+        board_items = _board_items(frame)[:board_limit]
+        if backend == "ths":
+            notes.append(f"akshare {field} constituents skipped: ths board list has no member API")
+            continue
         loaded = 0
         for board_item in board_items:
             board = board_item["name"]
@@ -581,7 +586,7 @@ def _board_names(df: pd.DataFrame) -> list[str]:
 def _board_items(df: pd.DataFrame) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for idx, row in df.iterrows():
-        name = _first_row_value(row, ["板块名称", "名称", "name"])
+        name = _first_row_value(row, ["board_name", "板块名称", "名称", "name"])
         if not _safe_text(name):
             continue
         rank = _safe_float(_first_row_value(row, ["排名", "序号", "rank"]))

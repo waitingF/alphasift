@@ -230,6 +230,29 @@ def main():
     ap = sub.add_parser("audit", help="评估项目能力、策略配置覆盖和已知短板")
     ap.add_argument("--json", action="store_true", help="以 JSON 输出")
 
+    # data-update
+    dup = sub.add_parser("data-update", help="串行更新全部本地可更新数据")
+    dup.add_argument("--skip-daily", action="store_true", help="跳过 daily-bars")
+    dup.add_argument("--skip-flow", action="store_true", help="跳过 flow-bars")
+    dup.add_argument("--skip-industry", action="store_true", help="跳过 industry-cache")
+    dup.add_argument("--skip-hotspot", action="store_true", help="跳过 hotspot-cache")
+    dup.add_argument(
+        "--init-if-missing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="本地库不存在时自动 init（默认开启）",
+    )
+    dup.add_argument("--lookback-days", type=int, default=800, help="init 回溯天数")
+    dup.add_argument("--include-st", action="store_true", help="Tushare 同步包含 ST")
+    dup.add_argument("--industry-output", default=None, help="行业映射输出路径")
+    dup.add_argument("--industry-max-boards", type=int, default=None, help="行业/概念板块抓取上限")
+    dup.add_argument("--hotspot-output", default=None, help="热点缓存 JSON 路径")
+    dup.add_argument("--hotspot-history", default=None, help="热点 history JSONL 路径")
+    dup.add_argument("--hotspot-top", type=int, default=20, help="热点缓存 Top N")
+    dup.add_argument("--hotspot-max-boards", type=int, default=None, help="热点抓取板块上限")
+    dup.add_argument("--explain", action="store_true", help="输出紧凑摘要")
+    dup.add_argument("--json", action="store_true", help="以 JSON 输出结果")
+
     # daily-bars
     db = sub.add_parser("daily-bars", help="本地 Tushare 日 K 库管理")
     db_sub = db.add_subparsers(dest="daily_bars_command", required=True)
@@ -553,6 +576,34 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
             print(_format_audit_explain(result))
+
+    elif args.command == "data-update":
+        from alphasift.data_update import format_data_update_explain, run_data_update
+
+        config = Config.from_env()
+        result = run_data_update(
+            config,
+            skip_daily=args.skip_daily,
+            skip_flow=args.skip_flow,
+            skip_industry=args.skip_industry,
+            skip_hotspot=args.skip_hotspot,
+            init_if_missing=args.init_if_missing,
+            lookback_days=args.lookback_days,
+            include_st=args.include_st,
+            industry_max_boards=args.industry_max_boards,
+            hotspot_top=args.hotspot_top,
+            hotspot_max_boards=args.hotspot_max_boards,
+            industry_output=args.industry_output,
+            hotspot_output=args.hotspot_output,
+            hotspot_history=args.hotspot_history,
+        )
+        if args.explain:
+            print(format_data_update_explain(result))
+        elif args.json:
+            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        else:
+            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        sys.exit(1 if result.had_failures else 0)
 
     elif args.command == "daily-bars":
         config = Config.from_env()

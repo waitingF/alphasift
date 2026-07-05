@@ -376,6 +376,23 @@ alphasift board-flow rank --json
 
 完整说明见 [docs/board-flow-guide.md](docs/board-flow-guide.md)。
 
+### 2d. 一键串行更新全部本地数据（data-update）
+
+按固定顺序依次更新：**daily-bars → flow-bars → industry-cache → hotspot-cache**（前两项需 `TUSHARE_TOKEN`）。本地库不存在时默认自动 `init`：
+
+```bash
+export TUSHARE_TOKEN=your_token
+
+# 更新全部（推荐定时任务）
+alphasift data-update --explain
+
+# 仅更新 Tushare 本地库
+alphasift data-update --skip-industry --skip-hotspot --explain
+
+# 本地库尚未 init 且不想自动拉全量
+alphasift data-update --no-init-if-missing --explain
+```
+
 ### 3. 全量日 K 硬筛选股
 
 ```bash
