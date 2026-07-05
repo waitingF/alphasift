@@ -17,6 +17,7 @@ def test_disabled_strategies_are_not_listed():
     assert "oversold_reversal" in strategies
     assert "quality_value" in strategies
     assert "shrink_pullback" in strategies
+    assert "main_inflow_momentum" in strategies
     assert "volume_breakout" in strategies
 
 
@@ -27,6 +28,7 @@ def test_list_strategies_returns_enabled_strategies_only():
         "balanced_alpha",
         "capital_heat",
         "dual_low",
+        "main_inflow_momentum",
         "momentum_quality",
         "oversold_reversal",
         "quality_value",

@@ -22,6 +22,7 @@ from alphasift.hotspot import (
 )
 from alphasift.industry import fetch_akshare_board_map, save_industry_map
 from alphasift.pipeline import screen
+from alphasift.screen_prerequisites import ScreenPrerequisitesError
 from alphasift.store import (
     evaluation_result_to_jsonl,
     list_saved_runs,
@@ -254,6 +255,59 @@ def main():
     db_fetch.add_argument("--lookback-days", type=int, default=120)
     db_fetch.add_argument("--requests-per-second", type=float, default=None)
 
+    # flow-bars
+    fb = sub.add_parser("flow-bars", help="本地 Tushare 资金流库管理")
+    fb_sub = fb.add_subparsers(dest="flow_bars_command", required=True)
+    fb_init = fb_sub.add_parser("init", help="初始化全 A 股 moneyflow 库")
+    fb_init.add_argument("--lookback-days", type=int, default=800)
+    fb_init.add_argument("--max-codes", type=int, default=None)
+    fb_init.add_argument("--workers", type=int, default=4)
+    fb_init.add_argument("--include-st", action="store_true")
+    fb_init.add_argument("--requests-per-second", type=float, default=None)
+    fb_init.add_argument("--reset-progress", action="store_true")
+    fb_init.add_argument("--quiet", action="store_true", help="关闭 tqdm 进度条")
+    fb_sync = fb_sub.add_parser("sync", help="增量同步到最新交易日")
+    fb_sync.add_argument("--trade-date", default=None, help="目标交易日 YYYYMMDD")
+    fb_sync.add_argument("--requests-per-second", type=float, default=None)
+    fb_sync.add_argument("--include-st", action="store_true")
+    fb_status = fb_sub.add_parser("status", help="检查本地库状态")
+    fb_status.add_argument("--explain", action="store_true", help="输出紧凑可读摘要")
+
+    # board-flow
+    bf = sub.add_parser("board-flow", help="本地主力流板块/个股排行（行业+概念）")
+    bf_sub = bf.add_subparsers(dest="board_flow_command", required=True)
+    bf_rank = bf_sub.add_parser(
+        "rank",
+        help="按行业/概念汇总主力净流入，并列出板块内个股 Top",
+    )
+    bf_rank.add_argument(
+        "--board-type",
+        default="both",
+        help="板块类型：industry、concept、both（默认 both，同时输出行业与概念）",
+    )
+    bf_rank.add_argument(
+        "--metric",
+        default="main_net_inflow_5d",
+        choices=[
+            "main_net_inflow",
+            "main_net_inflow_5d",
+            "main_net_inflow_10d",
+            "main_net_inflow_20d",
+        ],
+        help="排序指标，默认 main_net_inflow_5d（近 5 日主力净流入合计，万元）",
+    )
+    bf_rank.add_argument("--top-boards", type=int, default=15, help="每类板块输出 Top N")
+    bf_rank.add_argument("--top-stocks", type=int, default=10, help="每个板块内输出 Top N 个股")
+    bf_rank.add_argument(
+        "--mapping",
+        default=None,
+        help="code->industry/concepts 映射文件，默认 ${ALPHASIFT_DATA_DIR}/industry_map.csv",
+    )
+    bf_rank.add_argument("--lookback-days", type=int, default=60, help="读取本地 flow 窗口天数")
+    bf_rank.add_argument("--board", default=None, help="仅查看指定板块名称（精确匹配）")
+    bf_rank.add_argument("--explain", action="store_true", help="输出紧凑可读摘要")
+    bf_rank.add_argument("--json", action="store_true", help="以 JSON 输出")
+
     # quickstart
     qp = sub.add_parser(
         "quickstart",
@@ -274,29 +328,33 @@ def main():
             post_analyzers = list(config.post_analyzers)
             if args.post_analyzer:
                 post_analyzers.extend(args.post_analyzer)
-        result = screen(
-            args.strategy,
-            market=args.market,
-            max_output=args.max_output,
-            use_llm=not args.no_llm,
-            llm_context=args.context,
-            llm_context_files=args.context_file,
-            candidate_context_files=args.candidate_context_file,
-            collect_llm_candidate_context=args.collect_candidate_context or None,
-            candidate_context_max_candidates=args.candidate_context_max_candidates,
-            candidate_context_providers=_split_csv_args(args.candidate_context_provider),
-            industry_map_files=args.industry_map_file,
-            industry_provider=args.industry_provider,
-            post_analyzers=post_analyzers,
-            post_analysis_max_picks=args.post_analysis_max_picks,
-            daily_enrich=args.daily_enrich,
-            daily_enrich_max_candidates=args.daily_enrich_max_candidates,
-            daily_enrich_full_pool=args.daily_enrich_full_pool,
-            daily_source=args.daily_source,
-            deep_analysis=args.deep_analysis,
-            deep_analysis_max_picks=args.deep_analysis_max_picks,
-            config=config,
-        )
+        try:
+            result = screen(
+                args.strategy,
+                market=args.market,
+                max_output=args.max_output,
+                use_llm=not args.no_llm,
+                llm_context=args.context,
+                llm_context_files=args.context_file,
+                candidate_context_files=args.candidate_context_file,
+                collect_llm_candidate_context=args.collect_candidate_context or None,
+                candidate_context_max_candidates=args.candidate_context_max_candidates,
+                candidate_context_providers=_split_csv_args(args.candidate_context_provider),
+                industry_map_files=args.industry_map_file,
+                industry_provider=args.industry_provider,
+                post_analyzers=post_analyzers,
+                post_analysis_max_picks=args.post_analysis_max_picks,
+                daily_enrich=args.daily_enrich,
+                daily_enrich_max_candidates=args.daily_enrich_max_candidates,
+                daily_enrich_full_pool=args.daily_enrich_full_pool,
+                daily_source=args.daily_source,
+                deep_analysis=args.deep_analysis,
+                deep_analysis_max_picks=args.deep_analysis_max_picks,
+                config=config,
+            )
+        except ScreenPrerequisitesError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(2)
         if args.save_run:
             save_screen_result(result, data_dir=config.data_dir)
         if args.output:
@@ -499,6 +557,18 @@ def main():
     elif args.command == "daily-bars":
         config = Config.from_env()
         exit_code = _run_daily_bars_command(args, config)
+        if exit_code:
+            sys.exit(exit_code)
+
+    elif args.command == "flow-bars":
+        config = Config.from_env()
+        exit_code = _run_flow_bars_command(args, config)
+        if exit_code:
+            sys.exit(exit_code)
+
+    elif args.command == "board-flow":
+        config = Config.from_env()
+        exit_code = _run_board_flow_command(args, config)
         if exit_code:
             sys.exit(exit_code)
 
@@ -1054,6 +1124,168 @@ def _run_daily_bars_command(args, config: Config) -> int:
         "api_failures": stats.api_failures,
     }, ensure_ascii=False, indent=2))
     return 1 if stats.failed_codes or stats.source_errors else 0
+
+
+def _format_flow_bars_status_explain(summary: dict[str, object]) -> str:
+    lines = [
+        f"root={summary.get('root')}",
+        f"last_trade_date={summary.get('last_trade_date') or '-'}",
+        f"code_count={summary.get('code_count', 0)} moneyflow_files={summary.get('moneyflow_file_count', 0)}",
+    ]
+    if summary.get("stale_vs_effective"):
+        lines.append("stale: local store is behind snapshot effective trade date")
+    if summary.get("ahead_of_effective"):
+        lines.append("ahead: local store is newer than snapshot effective trade date")
+    in_progress = summary.get("in_progress")
+    if isinstance(in_progress, dict) and in_progress:
+        lines.append(
+            "in_progress: "
+            f"{in_progress.get('next_index')}/{in_progress.get('total_symbols')} "
+            f"({in_progress.get('percent_complete')}%) "
+            f"updated={in_progress.get('updated')} skipped={in_progress.get('skipped')} "
+            f"failed={in_progress.get('failed')} last={in_progress.get('last_symbol')}"
+        )
+        lines.append(f"progress_file={in_progress.get('path')}")
+    manifest_error = summary.get("manifest_error")
+    if manifest_error:
+        lines.append(f"manifest_error={manifest_error}")
+    failed = summary.get("failed_codes") or []
+    if failed:
+        lines.append(f"failed_codes={len(failed)} sample={failed[:5]}")
+    return "\n".join(lines)
+
+
+def _run_flow_bars_command(args, config: Config) -> int:
+    import os
+
+    from alphasift.flow_store import FlowBarStore
+    from alphasift.flow_sync import init_flow_bars, status_flow_bars, sync_flow_bars
+
+    token = os.getenv("TUSHARE_TOKEN", "").strip() or os.getenv("TUSHARE_API_TOKEN", "").strip()
+    store = FlowBarStore(config.flow_bars_dir)
+    rps = (
+        args.requests_per_second
+        if getattr(args, "requests_per_second", None) is not None
+        else config.flow_sync_requests_per_second
+    )
+
+    if args.flow_bars_command == "status":
+        effective = os.getenv("TUSHARE_TRADE_DATE", "").strip() or None
+        summary = status_flow_bars(store, effective_trade_date=effective)
+        if getattr(args, "explain", False):
+            print(_format_flow_bars_status_explain(summary))
+        else:
+            print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+
+    if not token:
+        print("TUSHARE_TOKEN is required for flow-bars init/sync", file=sys.stderr)
+        return 1
+
+    if args.flow_bars_command == "init":
+        stats = init_flow_bars(
+            store,
+            token=token,
+            lookback_days=args.lookback_days,
+            max_codes=args.max_codes,
+            workers=args.workers,
+            include_st=args.include_st,
+            requests_per_second=rps,
+            retry=config.flow_sync_retry,
+            retry_interval=config.flow_sync_retry_interval,
+            save_every=config.flow_sync_progress_save_every,
+            save_interval=config.flow_sync_progress_save_interval,
+            reset_progress=args.reset_progress,
+            show_progress=not getattr(args, "quiet", False),
+        )
+    elif args.flow_bars_command == "sync":
+        stats = sync_flow_bars(
+            store,
+            token=token,
+            trade_date=getattr(args, "trade_date", None),
+            requests_per_second=rps,
+            retry=config.flow_sync_retry,
+            retry_interval=config.flow_sync_retry_interval,
+            include_st=args.include_st,
+        )
+    else:
+        return 1
+
+    print(json.dumps({
+        "added_rows": stats.added_rows,
+        "updated_codes": stats.updated_codes,
+        "rebuilt_codes": stats.rebuilt_codes,
+        "failed_codes": stats.failed_codes,
+        "source_errors": stats.source_errors,
+        "api_attempts": stats.api_attempts,
+        "api_retries": stats.api_retries,
+        "api_failures": stats.api_failures,
+    }, ensure_ascii=False, indent=2))
+    return 1 if stats.failed_codes or stats.source_errors else 0
+
+
+def _parse_board_flow_types(raw: str) -> list[str]:
+    text = str(raw or "both").strip().lower()
+    if text in {"both", "all", "industry,concept", "concept,industry"}:
+        return ["industry", "concept"]
+    types = [item.strip() for item in text.replace("，", ",").split(",") if item.strip()]
+    valid = [item for item in types if item in {"industry", "concept"}]
+    if not valid:
+        raise ValueError("board-type must be industry, concept, or both")
+    return list(dict.fromkeys(valid))
+
+
+def _run_board_flow_command(args, config: Config) -> int:
+    from alphasift.board_flow import format_board_flow_explain, rank_board_flow
+    from alphasift.flow_store import FlowBarStore
+
+    if args.board_flow_command != "rank":
+        return 1
+
+    mapping_path = Path(args.mapping) if args.mapping else config.data_dir / "industry_map.csv"
+    if not mapping_path.is_file():
+        print(
+            f"industry mapping not found: {mapping_path}; "
+            "run `alphasift industry-cache --output data/industry_map.csv` first",
+            file=sys.stderr,
+        )
+        return 1
+
+    flow_root = config.flow_bars_dir or config.data_dir / "flow_bars"
+    if not Path(flow_root).is_dir():
+        print(
+            f"flow bar store not found: {flow_root}; "
+            "run `alphasift flow-bars init/sync` first",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        board_types = _parse_board_flow_types(args.board_type)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    store = FlowBarStore(flow_root)
+    result = rank_board_flow(
+        store,
+        mapping_path,
+        board_types=board_types,
+        metric=args.metric,
+        top_boards=args.top_boards,
+        top_stocks=args.top_stocks,
+        lookback_days=args.lookback_days,
+        board_filter=args.board,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(format_board_flow_explain(result))
+
+    if result.stock_count <= 0 or not result.boards:
+        return 1
+    return 0
 
 
 def _apply_env_file_args(env_files: list[str] | None) -> None:

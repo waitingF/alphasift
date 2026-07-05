@@ -300,6 +300,15 @@ def _compute_activity_score(df: pd.DataFrame, profile: dict[str, float]) -> pd.S
         turnover_score = turnover_score.where(turnover > 0, 40)
         score = score * 0.55 + turnover_score.clip(5, 100) * 0.45
 
+    if "main_net_inflow_5d" in df.columns:
+        inflow_5d = pd.to_numeric(df["main_net_inflow_5d"], errors="coerce")
+        flow_score = 50 + inflow_5d.clip(-500, 500) / 20
+        if "main_inflow_streak" in df.columns:
+            streak = pd.to_numeric(df["main_inflow_streak"], errors="coerce").fillna(0)
+            flow_score = flow_score + streak.clip(0, 10) * 2
+        has_flow = inflow_5d.notna()
+        score = score.where(~has_flow, score * 0.6 + flow_score.clip(5, 100) * 0.4)
+
     return score.clip(0, 100)
 
 

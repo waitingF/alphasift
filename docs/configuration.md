@@ -86,21 +86,82 @@ TUSHARE_TOKEN=...
 | `EVALUATION_FAILED_BREAKOUT_PCT` | 否 | 形态后验中“突破失败”的最高收益百分比 | `-3` |
 | `EVALUATION_PRICE_PATH_ENABLED` | 否 | 评估时是否抓取日 K 路径，计算最大回撤和最大浮盈 | `false` |
 | `EVALUATION_PRICE_PATH_LOOKBACK_DAYS` | 否 | 价格路径日 K 回看天数 | `90` |
-| `ALPHASIFT_DATA_DIR` | 否 | 运行记录和评估结果目录 | `./data` |
+| `ALPHASIFT_DATA_DIR` | 否 | 数据根目录（daily_bars、flow_bars、缓存、运行记录等均在其下固定子路径） | `./data` |
 | `STRATEGIES_DIR` | 否 | 策略目录路径 | 自动查找 |
 
-## 方案 C：全量日 K 硬筛（规划中）
+## 统一数据目录
 
-若你已用 Tushare 预下载全量 A 股日 K，并希望对含日 K 硬条件的策略在快照筛后**全量**做日 K 硬筛（去掉 Top N 截断），详见实现方案：
+仅配置 `ALPHASIFT_DATA_DIR` 一个根目录，代码自动派生：
 
-- [docs/plans/2026-06-26-full-daily-k-hard-filter.md](plans/2026-06-26-full-daily-k-hard-filter.md)
+| 子路径 | 用途 |
+|--------|------|
+| `daily_bars/` | 本地 Tushare 日 K Parquet 库 |
+| `flow_bars/` | 本地 Tushare moneyflow 资金流 Parquet 库 |
+| `daily_history/` | 在线日 K 抓取缓存 |
+| `candidate_context/` | LLM 候选上下文缓存 |
+| `runs/`、`evaluations/` | screen 运行与 T+N 评估 |
 
-规划中的主要配置项（实现后生效）：
+`DAILY_BARS_DIR` 迁移期仍可作为 override，文档不再推荐单独配置；**不**提供 `FLOW_BARS_DIR`，flow 库路径恒为 `{ALPHASIFT_DATA_DIR}/flow_bars`。
+
+## 本地日 K 库（daily-bars）
 
 | 变量 | 说明 |
 |------|------|
 | `DAILY_ENRICH_FULL_POOL` | 含日 K 硬条件时，对快照筛后全部候选做日 K 增强与硬筛 |
-| `DAILY_BARS_DIR` | 本地 Tushare 日 K 库根目录（Parquet） |
+| `DAILY_SOURCE=local` | screen 从本地库读日 K |
+| `alphasift daily-bars init/sync/status` | 离线初始化与增量同步 |
+
+## 本地资金流库（flow-bars）
+
+主力口径：**大单 + 特大单净流入（万元）**；Tushare `moneyflow` 为日频盘后数据（约 19:00 后更新）。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `FLOW_ENRICH_ENABLED` | `false` | 非 flow 硬筛策略也可 opt-in 增强 |
+| `FLOW_ENRICH_MAX_CANDIDATES` | `100` | Top N 候选 flow enrich |
+| `FLOW_ENRICH_FULL_POOL` | `false` | 快照筛后全量 flow enrich |
+| `FLOW_LOOKBACK_DAYS` | `60` | 读盘窗口 |
+| `FLOW_SYNC_REQUESTS_PER_SECOND` | `2.0` | 全市场日更限速 |
+| `FLOW_SYNC_RETRY` | `3` | 重试次数 |
+| `FLOW_SYNC_RETRY_INTERVAL` | `1.0` | 重试间隔（秒） |
+
+CLI：
+
+```bash
+alphasift flow-bars init --lookback-days 800 [--workers 4]
+alphasift flow-bars sync [--trade-date YYYYMMDD]
+alphasift flow-bars status [--explain]
+```
+
+含主力资金硬条件的策略 YAML 示例见 `strategies/main_inflow_momentum.yaml`；实现方案见 [docs/plans/2026-07-05-flow-bars-migration.md](plans/2026-07-05-flow-bars-migration.md)。
+
+**注意：** 若策略启用 `require_no_price_up_flow_out`（价涨量出 guard），pipeline 会自动要求日 K enrich；请确保已同步 `daily-bars` 本地库，或配置 `DAILY_SOURCE=local`。运行 `alphasift screen main_inflow_momentum` 时，若本地库未就绪会在拉快照前报错并提示 init/sync 命令。
+
+完整说明见 [board-flow-guide.md](board-flow-guide.md)。
+
+## 板块主力流排行（board-flow）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| （无额外 env） | - | 依赖 `flow_bars` 与 `industry_map.csv` |
+
+CLI：
+
+```bash
+alphasift board-flow rank [--board-type both|industry|concept] [--metric main_net_inflow_5d] [--explain]
+```
+
+## 方案 C：全量日 K 硬筛
+
+若你已用 Tushare 预下载全量 A 股日 K，并希望对含日 K 硬条件的策略在快照筛后**全量**做日 K 硬筛（去掉 Top N 截断），详见：
+
+- [docs/plans/2026-06-26-full-daily-k-hard-filter.md](plans/2026-06-26-full-daily-k-hard-filter.md)
+
+规划中的主要配置项：
+
+| 变量 | 说明 |
+|------|------|
+| `DAILY_ENRICH_FULL_POOL` | 含日 K 硬条件时，对快照筛后全部候选做日 K 增强与硬筛 |
 | `DAILY_SOURCE=local` | screen 从本地库读日 K，不打在线 API |
 | `alphasift daily-bars init/sync` | 离线初始化与增量同步 CLI |
 

@@ -272,7 +272,7 @@ def test_pipeline_full_pool_passes_all_candidates(monkeypatch):
 
     monkeypatch.setattr("alphasift.pipeline.fetch_snapshot_with_fallback", lambda sources, **kwargs: df)
     monkeypatch.setattr("alphasift.pipeline.enrich_daily_features", fake_enrich)
-    monkeypatch.setattr("alphasift.pipeline._validate_local_daily_store", lambda config: None)
+    monkeypatch.setattr("alphasift.pipeline.validate_screen_prerequisites", lambda **kwargs: None)
 
     result = screen(
         "shrink_pullback",
@@ -349,7 +349,7 @@ def test_pipeline_fetch_failed_rows_are_filtered(monkeypatch):
 
     monkeypatch.setattr("alphasift.pipeline.fetch_snapshot_with_fallback", lambda sources, **kwargs: df)
     monkeypatch.setattr("alphasift.pipeline.enrich_daily_features", fake_enrich)
-    monkeypatch.setattr("alphasift.pipeline._validate_local_daily_store", lambda config: None)
+    monkeypatch.setattr("alphasift.pipeline.validate_screen_prerequisites", lambda **kwargs: None)
 
     result = screen(
         "shrink_pullback",

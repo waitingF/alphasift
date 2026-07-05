@@ -56,6 +56,7 @@ def collect_candidate_context(
     cache_dir: str | Path | None = None,
     cache_ttl_hours: int = 24,
     source_weights: dict[str, float] | None = None,
+    flow_bars_dir: str | Path | None = None,
 ) -> tuple[list[dict[str, object]], list[str]]:
     """Collect candidate-level context rows keyed by stock code.
 
@@ -82,6 +83,15 @@ def collect_candidate_context(
     if not tasks:
         return [], []
 
+    flow_store = None
+    if flow_bars_dir and Path(flow_bars_dir).is_dir():
+        try:
+            from alphasift.flow_store import FlowBarStore
+
+            flow_store = FlowBarStore(flow_bars_dir)
+        except Exception:
+            flow_store = None
+
     results: list[tuple[dict[str, object] | None, list[str]] | None] = [None] * len(tasks)
     max_workers = min(_DEFAULT_MAX_WORKERS, len(tasks))
     if max_workers <= 1:
@@ -94,6 +104,7 @@ def collect_candidate_context(
                 cache_dir=cache_dir,
                 cache_ttl_hours=cache_ttl_hours,
                 source_weights=source_weights,
+                flow_store=flow_store,
             )
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -107,6 +118,7 @@ def collect_candidate_context(
                     cache_dir=cache_dir,
                     cache_ttl_hours=cache_ttl_hours,
                     source_weights=source_weights,
+                    flow_store=flow_store,
                 ): index
                 for index, task in enumerate(tasks)
             }
@@ -138,6 +150,7 @@ def _collect_candidate_context_row(
     cache_dir: str | Path | None,
     cache_ttl_hours: int,
     source_weights: dict[str, float] | None,
+    flow_store: object | None = None,
 ) -> tuple[dict[str, object] | None, list[str]]:
     code = candidate["code"]
     errors: list[str] = []
@@ -171,9 +184,13 @@ def _collect_candidate_context_row(
                 errors.append(f"{code} announcement: {exc}")
         if "fund_flow" in providers or "fundflow" in providers:
             try:
-                row["fund_flow"] = fetch_stock_fund_flow_summary(code)
+                row["fund_flow"] = fetch_stock_fund_flow_summary(code, flow_store=flow_store)
                 if row["fund_flow"]:
                     successful_sources.append("fund_flow")
+                    if flow_store is not None and getattr(flow_store, "has_code", lambda _c: False)(code):
+                        row["flow_context_source"] = "local"
+                    else:
+                        row["flow_context_source"] = "akshare"
             except Exception as exc:
                 errors.append(f"{code} fund_flow: {exc}")
         if "quote" in providers:
@@ -246,7 +263,43 @@ def fetch_stock_announcement_summary(code: str, *, limit: int = 3) -> str:
     return _compress_text(" | ".join(_dedupe(items)), max_len=520)
 
 
-def fetch_stock_fund_flow_summary(code: str) -> str:
+def fetch_stock_fund_flow_summary(code: str, *, flow_store: object | None = None) -> str:
+    if flow_store is not None and getattr(flow_store, "has_code", lambda _c: False)(code):
+        try:
+            from alphasift.flow_metrics import build_stock_flow_snapshot
+
+            snapshot = build_stock_flow_snapshot(flow_store.read(code), daily_bars=None)
+            formatted = _format_flow_snapshot(snapshot)
+            if formatted:
+                return formatted
+        except Exception:
+            pass
+    return _fetch_akshare_fund_flow_summary(code)
+
+
+def _format_flow_snapshot(snapshot: dict[str, object]) -> str:
+    if not snapshot:
+        return ""
+    parts: list[str] = []
+    labels = {
+        "as_of": "截至",
+        "main_net_inflow": "主力净流入(万元)",
+        "main_net_inflow_5d": "5日主力净流入(万元)",
+        "main_inflow_streak": "连续净流入天数",
+        "main_net_inflow_rate": "主力净流入占比",
+        "net_mf_amount": "L2主动净额(万元)",
+    }
+    for key, label in labels.items():
+        value = snapshot.get(key)
+        if value is None or value == "":
+            continue
+        parts.append(f"{label}={value}")
+    note = "口径:大单+特大单净流入(万元)"
+    text = "，".join(parts[:8])
+    return _compress_text(f"{text}；{note}" if text else note, max_len=420)
+
+
+def _fetch_akshare_fund_flow_summary(code: str) -> str:
     import akshare as ak
 
     market = _market_for_code(code)

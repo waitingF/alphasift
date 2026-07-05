@@ -230,6 +230,18 @@ class Config:
     daily_sync_progress_save_every: int = 50
     daily_sync_progress_save_interval: float = 15.0
 
+    # Optional moneyflow enrichment after snapshot hard filters.
+    flow_enrich_enabled: bool = False
+    flow_enrich_max_candidates: int = 100
+    flow_lookback_days: int = 60
+    flow_enrich_full_pool: bool = False
+    flow_bars_dir: Path | None = None
+    flow_sync_requests_per_second: float = 2.0
+    flow_sync_retry: int = 3
+    flow_sync_retry_interval: float = 1.0
+    flow_sync_progress_save_every: int = 50
+    flow_sync_progress_save_interval: float = 15.0
+
     # Independent risk layer.
     risk_enabled: bool = True
     risk_max_penalty: float = 12.0
@@ -395,6 +407,28 @@ class Config:
             daily_sync_progress_save_interval=max(
                 1.0,
                 _parse_float_env("DAILY_SYNC_PROGRESS_SAVE_INTERVAL", 15.0),
+            ),
+            flow_enrich_enabled=_parse_bool_env("FLOW_ENRICH_ENABLED", False),
+            flow_enrich_max_candidates=max(1, int(os.getenv("FLOW_ENRICH_MAX_CANDIDATES", "100"))),
+            flow_lookback_days=max(30, int(os.getenv("FLOW_LOOKBACK_DAYS", "60"))),
+            flow_enrich_full_pool=_parse_bool_env("FLOW_ENRICH_FULL_POOL", False),
+            flow_bars_dir=data_dir / "flow_bars",
+            flow_sync_requests_per_second=max(
+                0.0,
+                _parse_float_env("FLOW_SYNC_REQUESTS_PER_SECOND", 2.0),
+            ),
+            flow_sync_retry=max(0, int(os.getenv("FLOW_SYNC_RETRY", "3"))),
+            flow_sync_retry_interval=max(
+                0.0,
+                _parse_float_env("FLOW_SYNC_RETRY_INTERVAL", 1.0),
+            ),
+            flow_sync_progress_save_every=max(
+                1,
+                int(os.getenv("FLOW_SYNC_PROGRESS_SAVE_EVERY", "50")),
+            ),
+            flow_sync_progress_save_interval=max(
+                1.0,
+                _parse_float_env("FLOW_SYNC_PROGRESS_SAVE_INTERVAL", 15.0),
             ),
             risk_enabled=_parse_bool_env("RISK_ENABLED", True),
             risk_max_penalty=_parse_float_env("RISK_MAX_PENALTY", 12.0),

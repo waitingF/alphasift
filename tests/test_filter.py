@@ -5,8 +5,44 @@ from alphasift.filter import (
     SnapshotFieldMissingError,
     apply_hard_filters,
     hard_filter_rejection_summary,
+    requires_daily_features,
 )
 from alphasift.models import HardFilterConfig
+
+
+def test_requires_daily_features_when_price_up_flow_out_guard_enabled():
+    assert requires_daily_features(HardFilterConfig(require_no_price_up_flow_out=True))
+    assert not requires_daily_features(HardFilterConfig(main_inflow_streak_min=5))
+
+
+def test_apply_hard_filters_rejects_unverified_price_up_flow_out():
+    df = pd.DataFrame([
+        {
+            "name": "示例A",
+            "price": 10.0,
+            "amount": 100_000_000,
+            "price_up_flow_out": False,
+        },
+        {
+            "name": "示例B",
+            "price": 11.0,
+            "amount": 100_000_000,
+            "price_up_flow_out": pd.NA,
+        },
+        {
+            "name": "示例C",
+            "price": 12.0,
+            "amount": 100_000_000,
+            "price_up_flow_out": True,
+        },
+    ])
+
+    filtered = apply_hard_filters(
+        df,
+        HardFilterConfig(require_no_price_up_flow_out=True),
+    )
+
+    assert filtered["name"].tolist() == ["示例A"]
 
 
 def test_apply_hard_filters_fails_when_required_snapshot_field_is_missing():

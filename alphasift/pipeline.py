@@ -12,12 +12,15 @@ from alphasift.config import Config
 from alphasift.candidate_context import collect_candidate_context
 from alphasift.context import build_llm_context
 from alphasift.daily import enrich_daily_features
+from alphasift.flow import enrich_flow_features
 from alphasift.dsa_provider import apply_dsa_provider_context
 from alphasift.filter import (
     apply_hard_filters,
     hard_filter_rejection_summary,
     requires_daily_features,
+    requires_flow_features,
     without_daily_filters,
+    without_flow_filters,
 )
 from alphasift.industry import enrich_industry_concepts
 from alphasift.models import Pick, ScreenResult
@@ -32,6 +35,7 @@ from alphasift.post_analysis import normalize_post_analyzers, run_post_analyzers
 from alphasift.ranker import rank_candidates_with_metadata
 from alphasift.risk import apply_portfolio_overlay, apply_risk_overlay
 from alphasift.scorer import compute_screen_scores, factor_score_columns
+from alphasift.screen_prerequisites import validate_screen_prerequisites
 from alphasift.snapshot import fetch_snapshot_with_fallback
 from alphasift.strategy import load_all_strategies
 
@@ -58,6 +62,9 @@ def screen(
     daily_enrich_max_candidates: int | None = None,
     daily_enrich_full_pool: bool | None = None,
     daily_source: str | None = None,
+    flow_enrich: bool | None = None,
+    flow_enrich_max_candidates: int | None = None,
+    flow_enrich_full_pool: bool | None = None,
     deep_analysis: bool = False,
     deep_analysis_max_picks: int | None = None,
     context: dict[str, object] | None = None,
@@ -124,15 +131,34 @@ def screen(
         or deep_analysis_max_picks
     )
     daily_needed = requires_daily_features(screening.hard_filters)
+    flow_needed = requires_flow_features(screening.hard_filters)
     daily_requested = config.daily_enrich_enabled if daily_enrich is None else daily_enrich
+    flow_requested = config.flow_enrich_enabled if flow_enrich is None else flow_enrich
     daily_limit = daily_enrich_max_candidates or config.daily_enrich_max_candidates
+    flow_limit = flow_enrich_max_candidates or config.flow_enrich_max_candidates
     full_pool = (
         config.daily_enrich_full_pool
         if daily_enrich_full_pool is None
         else daily_enrich_full_pool
     )
+    flow_full_pool = (
+        config.flow_enrich_full_pool
+        if flow_enrich_full_pool is None
+        else flow_enrich_full_pool
+    )
     effective_daily_source = daily_source or config.daily_source
-    snapshot_filters = without_daily_filters(screening.hard_filters) if daily_needed else screening.hard_filters
+    snapshot_filters = screening.hard_filters
+    if daily_needed:
+        snapshot_filters = without_daily_filters(snapshot_filters)
+    if flow_needed:
+        snapshot_filters = without_flow_filters(snapshot_filters)
+
+    validate_screen_prerequisites(
+        strategy=strategy,
+        hard_filters=screening.hard_filters,
+        config=config,
+        daily_source=effective_daily_source,
+    )
 
     # 2. Fetch snapshot
     snapshot_df = fetch_snapshot_with_fallback(
@@ -236,12 +262,9 @@ def screen(
                 manifest_date = str(
                     DailyBarStore(config.daily_bars_dir).manifest().get("last_trade_date", "")
                 )
-                degradation.extend(_compare_trade_dates(manifest_date, effective_trade_date))
-            except Exception:
+                degradation.extend(_compare_trade_dates(manifest_date, effective_trade_date, store="daily"))
+            except (OSError, RuntimeError):
                 pass
-
-        if use_full_pool and effective_daily_source == "local":
-            _validate_local_daily_store(config)
 
         try:
             enriched = enrich_daily_features(
@@ -322,12 +345,17 @@ def screen(
                 suffix = f" | +{len(daily_errors) - 5} more" if len(daily_errors) > 5 else ""
                 degradation.append(f"Daily K-line enrichment row errors: {sample}{suffix}")
             if daily_needed:
+                post_daily_filters = (
+                    without_flow_filters(screening.hard_filters)
+                    if flow_needed
+                    else screening.hard_filters
+                )
                 daily_filter_rejections = hard_filter_rejection_summary(
                     enriched,
-                    screening.hard_filters,
+                    post_daily_filters,
                     limit=6,
                 )
-                df = apply_hard_filters(enriched, screening.hard_filters)
+                df = apply_hard_filters(enriched, post_daily_filters)
                 after_filter_count = len(df)
                 if daily_filter_rejections:
                     degradation.append(
@@ -359,6 +387,136 @@ def screen(
             post_analyzers=analyzer_names,
             daily_enriched=daily_enriched,
             daily_enrich_count=daily_enrich_count,
+            risk_enabled=config.risk_enabled,
+            portfolio_diversity_enabled=config.portfolio_diversity_enabled,
+        )
+
+    flow_enriched = False
+    flow_enrich_count = 0
+    flow_enrich_mode = ""
+    flow_store_last_trade_date: str | None = None
+    flow_effective_trade_date: str | None = None
+    if flow_needed or flow_requested:
+        use_flow_full_pool = bool(flow_needed and flow_full_pool)
+        if use_flow_full_pool:
+            enrich_df = df
+            enrich_count = len(enrich_df)
+            flow_enrich_mode = "full_pool"
+        else:
+            provisional = _sort_screened_candidates(compute_screen_scores(df, screening), screening)
+            enrich_count = min(flow_limit, len(provisional))
+            enrich_df = provisional.head(enrich_count)
+            flow_enrich_mode = "top_n"
+            degradation.append(f"Flow enrich mode: top_n limit={enrich_count}")
+
+        if daily_effective_trade_date is not None:
+            effective_trade_date = daily_effective_trade_date
+        else:
+            effective_trade_date, trade_date_notes = resolve_effective_trade_date(
+                config,
+                snapshot_df,
+                daily_bars_dir=config.daily_bars_dir,
+            )
+            degradation.extend(trade_date_notes)
+        flow_effective_trade_date = effective_trade_date
+
+        from alphasift.daily_store import DailyBarStore
+        from alphasift.flow_store import FlowBarStore
+
+        flow_store = FlowBarStore(config.flow_bars_dir)
+        try:
+            manifest_date = str(flow_store.manifest().get("last_trade_date", ""))
+            degradation.extend(_compare_trade_dates(manifest_date, effective_trade_date, store="flow"))
+        except (OSError, RuntimeError):
+            pass
+
+        daily_store = None
+        if (
+            screening.hard_filters.require_no_price_up_flow_out
+            and config.daily_bars_dir
+            and Path(config.daily_bars_dir).is_dir()
+        ):
+            daily_store = DailyBarStore(config.daily_bars_dir)
+
+        try:
+            enriched = enrich_flow_features(
+                enrich_df,
+                flow_store=flow_store,
+                daily_store=daily_store,
+                lookback_days=config.flow_lookback_days,
+                max_rows=enrich_count,
+                end_date=effective_trade_date,
+            )
+            flow_enriched = True
+            flow_errors = [str(item) for item in enriched.attrs.get("flow_errors", [])]
+            flow_enrich_count = int(enriched.attrs.get("flow_success_count", len(enriched)))
+            fetch_failed_codes = [
+                str(item) for item in enriched.attrs.get("flow_fetch_failed_codes", []) or []
+            ]
+            flow_store_last_trade_date = str(
+                enriched.attrs.get("flow_store_manifest_last_trade_date", "") or ""
+            ) or None
+            flow_quality_flag_counts = dict(enriched.attrs.get("flow_quality_flag_counts", {}) or {})
+            if use_flow_full_pool:
+                degradation.append(
+                    f"Flow enrich mode: full_pool; attempted={enrich_count} "
+                    f"succeeded={flow_enrich_count} fetch_failed={len(fetch_failed_codes)}"
+                )
+            else:
+                degradation.append(
+                    f"Flow enrichment attempted {enrich_count} candidates, "
+                    f"succeeded {flow_enrich_count} of {after_filter_count} snapshot-filtered candidates"
+                )
+            if flow_quality_flag_counts:
+                flag_summary = ", ".join(
+                    f"{name}={count}" for name, count in sorted(flow_quality_flag_counts.items())
+                )
+                degradation.append(f"Flow quality flags: {flag_summary}")
+            if flow_errors:
+                sample = " | ".join(flow_errors[:5])
+                suffix = f" | +{len(flow_errors) - 5} more" if len(flow_errors) > 5 else ""
+                degradation.append(f"Flow enrichment row errors: {sample}{suffix}")
+            if flow_needed:
+                flow_filter_rejections = hard_filter_rejection_summary(
+                    enriched,
+                    screening.hard_filters,
+                    limit=6,
+                )
+                df = apply_hard_filters(enriched, screening.hard_filters)
+                after_filter_count = len(df)
+                if flow_filter_rejections:
+                    degradation.append(
+                        "Flow hard-filter rejections: "
+                        + "; ".join(flow_filter_rejections)
+                    )
+            else:
+                df = enriched
+        except Exception as exc:
+            if flow_needed:
+                raise RuntimeError(
+                    "Flow enrichment is required by this strategy but failed: "
+                    f"{exc}"
+                ) from exc
+            degradation.append(f"Flow enrichment skipped: {exc}")
+
+    if df.empty:
+        empty_reason = "No candidates after flow hard filter" if flow_needed else "No candidates after daily hard filter"
+        return ScreenResult(
+            strategy=strategy,
+            market=market,
+            strategy_version=strat.version,
+            strategy_category=strat.category,
+            snapshot_count=snapshot_count,
+            after_filter_count=0,
+            run_id=run_id,
+            degradation=[*degradation, empty_reason],
+            snapshot_source=snapshot_source,
+            source_errors=source_errors,
+            post_analyzers=analyzer_names,
+            daily_enriched=daily_enriched,
+            daily_enrich_count=daily_enrich_count,
+            flow_enriched=flow_enriched,
+            flow_enrich_count=flow_enrich_count,
             risk_enabled=config.risk_enabled,
             portfolio_diversity_enabled=config.portfolio_diversity_enabled,
         )
@@ -417,6 +575,7 @@ def screen(
                 ),
                 cache_ttl_hours=config.llm_candidate_context_cache_ttl_hours,
                 source_weights=event_source_weights,
+                flow_bars_dir=config.flow_bars_dir,
             )
             degradation.append(
                 f"Candidate context collected rows={len(candidate_context_rows)}"
@@ -545,6 +704,12 @@ def screen(
         daily_full_pool=bool(daily_needed and full_pool),
         daily_store_last_trade_date=daily_store_last_trade_date,
         daily_effective_trade_date=daily_effective_trade_date,
+        flow_enriched=flow_enriched,
+        flow_enrich_count=flow_enrich_count,
+        flow_enrich_mode=flow_enrich_mode,
+        flow_full_pool=bool(flow_needed and flow_full_pool),
+        flow_store_last_trade_date=flow_store_last_trade_date,
+        flow_effective_trade_date=flow_effective_trade_date,
         risk_enabled=config.risk_enabled,
         portfolio_diversity_enabled=config.portfolio_diversity_enabled,
         portfolio_concentration_notes=portfolio_concentration_notes,
@@ -583,28 +748,20 @@ def resolve_effective_trade_date(
     return None, notes
 
 
-def _validate_local_daily_store(config: Config) -> None:
-    from alphasift.daily_store import DailyBarStore, require_pyarrow
-
-    bars_dir = config.daily_bars_dir
-    if bars_dir is None or not Path(bars_dir).is_dir():
-        raise RuntimeError(
-            f"DAILY_SOURCE=local requires an existing daily bar store at {bars_dir}; "
-            "run `alphasift daily-bars init` first"
-        )
-    require_pyarrow()
-    DailyBarStore(bars_dir).manifest()
-
-
-def _compare_trade_dates(manifest_date: str | None, effective_date: str | None) -> list[str]:
+def _compare_trade_dates(
+    manifest_date: str | None,
+    effective_date: str | None,
+    *,
+    store: str = "daily",
+) -> list[str]:
     if not manifest_date or not effective_date:
         return []
     manifest = manifest_date.replace("-", "")[:8]
     effective = effective_date.replace("-", "")[:8]
     if manifest < effective:
-        return [f"daily store stale: manifest={manifest} effective={effective}"]
+        return [f"{store} store stale: manifest={manifest} effective={effective}"]
     if manifest > effective:
-        return [f"daily store ahead of snapshot: manifest={manifest} effective={effective}"]
+        return [f"{store} store ahead of snapshot: manifest={manifest} effective={effective}"]
     return []
 
 

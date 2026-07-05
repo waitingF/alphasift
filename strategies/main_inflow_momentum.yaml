@@ -1,0 +1,42 @@
+# 主力持续流入策略
+name: main_inflow_momentum
+display_name: 主力持续流入
+description: 快照流动性筛选后，要求主力连续净流入且非价涨量出背离（需 flow-bars + daily-bars）
+version: "1.0"
+category: momentum
+tags: [momentum, capital_flow, main_inflow]
+
+screening:
+  enabled: true
+  market_scope: [cn]
+  hard_filters:
+    exclude_st: true
+    amount_min: 300000000
+    change_pct_min: 1.0
+    change_pct_max: 9.0
+    price_min: 3
+    price_max: 220
+    main_inflow_streak_min: 5
+    main_net_inflow_5d_min: 0
+    require_no_price_up_flow_out: true
+  tech_weight: 0.55
+  factor_weights:
+    momentum: 0.30
+    activity: 0.30
+    liquidity: 0.20
+    stability: 0.20
+  scoring_profile:
+    activity_ideal_volume_ratio: 2.5
+    activity_ideal_turnover_rate: 5.0
+  risk_profile:
+    chase_change_pct: 9.0
+    abnormal_volume_ratio: 8.0
+  portfolio_profile:
+    max_same_bucket: 1
+    concentration_penalty: 4.0
+  ranking_hints: |
+    优先关注：
+    1. 主力连续净流入天数较长，5日累计净流入为正
+    2. 当日非价涨量出背离形态
+    3. 成交额与涨幅处于可持续区间
+  max_output: 5

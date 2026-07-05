@@ -35,6 +35,13 @@ _DAILY_FILTER_DEFAULTS = {
     "atr_20_pct_min": None,
     "atr_20_pct_max": None,
 }
+_FLOW_FILTER_DEFAULTS = {
+    "main_inflow_streak_min": None,
+    "main_net_inflow_5d_min": None,
+    "main_net_inflow_min": None,
+    "main_net_inflow_rate_min": None,
+    "require_no_price_up_flow_out": False,
+}
 
 
 class SnapshotFieldMissingError(ValueError):
@@ -96,6 +103,12 @@ def apply_hard_filters(df: pd.DataFrame, filters: HardFilterConfig) -> pd.DataFr
     mask = _filter_max(result, mask, ["max_drawdown_20d_pct"], filters.max_drawdown_20d_pct_max)
     mask = _filter_min(result, mask, ["atr_20_pct"], filters.atr_20_pct_min)
     mask = _filter_max(result, mask, ["atr_20_pct"], filters.atr_20_pct_max)
+
+    mask = _filter_min(result, mask, ["main_inflow_streak"], filters.main_inflow_streak_min)
+    mask = _filter_min(result, mask, ["main_net_inflow_5d"], filters.main_net_inflow_5d_min)
+    mask = _filter_min(result, mask, ["main_net_inflow"], filters.main_net_inflow_min)
+    mask = _filter_min(result, mask, ["main_net_inflow_rate"], filters.main_net_inflow_rate_min)
+    mask = _filter_bool_false(result, mask, "price_up_flow_out", filters.require_no_price_up_flow_out)
 
     return result.loc[mask].copy()
 
@@ -181,43 +194,40 @@ def hard_filter_rejection_summary(
     record_max("max_drawdown_20d_pct_max", ["max_drawdown_20d_pct"], filters.max_drawdown_20d_pct_max)
     record_min("atr_20_pct_min", ["atr_20_pct"], filters.atr_20_pct_min)
     record_max("atr_20_pct_max", ["atr_20_pct"], filters.atr_20_pct_max)
+    record_min("main_inflow_streak_min", ["main_inflow_streak"], filters.main_inflow_streak_min)
+    record_min("main_net_inflow_5d_min", ["main_net_inflow_5d"], filters.main_net_inflow_5d_min)
+    record_min("main_net_inflow_min", ["main_net_inflow"], filters.main_net_inflow_min)
+    record_min("main_net_inflow_rate_min", ["main_net_inflow_rate"], filters.main_net_inflow_rate_min)
+    if filters.require_no_price_up_flow_out:
+        record("require_no_price_up_flow_out", _filter_bool_false(df, mask, "price_up_flow_out", True))
 
     return diagnostics
 
 
 def requires_daily_features(filters: HardFilterConfig) -> bool:
     """Return whether a hard-filter config needs daily K-line features."""
-    return any([
-        filters.change_60d_min is not None,
-        filters.change_60d_max is not None,
-        filters.require_ma_bullish,
-        filters.require_price_above_ma20,
-        filters.signal_score_min is not None,
-        bool(filters.macd_status_whitelist),
-        bool(filters.rsi_status_whitelist),
-        filters.breakout_20d_pct_min is not None,
-        filters.breakout_20d_pct_max is not None,
-        filters.range_20d_pct_max is not None,
-        filters.volume_ratio_20d_min is not None,
-        filters.volume_ratio_20d_max is not None,
-        filters.body_pct_min is not None,
-        filters.body_pct_max is not None,
-        filters.pullback_to_ma20_pct_min is not None,
-        filters.pullback_to_ma20_pct_max is not None,
-        filters.consolidation_days_20d_min is not None,
-        filters.consolidation_days_20d_max is not None,
-        filters.volatility_20d_pct_min is not None,
-        filters.volatility_20d_pct_max is not None,
-        filters.max_drawdown_20d_pct_min is not None,
-        filters.max_drawdown_20d_pct_max is not None,
-        filters.atr_20_pct_min is not None,
-        filters.atr_20_pct_max is not None,
-    ])
+    return filters.require_no_price_up_flow_out or _has_non_default_filters(
+        filters, _DAILY_FILTER_DEFAULTS
+    )
 
 
 def without_daily_filters(filters: HardFilterConfig) -> HardFilterConfig:
     """Return a copy with daily K-line filters disabled."""
     return replace(filters, **_DAILY_FILTER_DEFAULTS)
+
+
+def requires_flow_features(filters: HardFilterConfig) -> bool:
+    """Return whether a hard-filter config needs moneyflow features."""
+    return _has_non_default_filters(filters, _FLOW_FILTER_DEFAULTS)
+
+
+def without_flow_filters(filters: HardFilterConfig) -> HardFilterConfig:
+    """Return a copy with moneyflow filters disabled."""
+    return replace(filters, **_FLOW_FILTER_DEFAULTS)
+
+
+def _has_non_default_filters(filters: HardFilterConfig, defaults: dict[str, object]) -> bool:
+    return any(getattr(filters, key) != value for key, value in defaults.items())
 
 
 def _find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -282,6 +292,24 @@ def _filter_bool_true(
             f"Missing required daily feature column for bool filter: {col_name}"
         )
     return mask & (df[col_name] == True)  # noqa: E712
+
+
+def _filter_bool_false(
+    df: pd.DataFrame,
+    mask: pd.Series,
+    col_name: str,
+    enabled: bool,
+) -> pd.Series:
+    if not enabled:
+        return mask
+    if not mask.any():
+        return mask
+    if col_name not in df.columns:
+        raise SnapshotFieldMissingError(
+            f"Missing required flow feature column for bool filter: {col_name}"
+        )
+    series = df[col_name]
+    return mask & series.notna() & (series != True)  # noqa: E712
 
 
 def _filter_in(

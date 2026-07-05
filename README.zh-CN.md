@@ -327,9 +327,54 @@ alphasift daily-bars status
 alphasift daily-bars fetch 600519 000001 --lookback-days 120
 ```
 
-库默认落在 `${ALPHASIFT_DATA_DIR}/daily_bars`，可用 `DAILY_BARS_DIR` 覆盖。init 支持 `--workers 4` 并行拉取（与 `DAILY_SYNC_REQUESTS_PER_SECOND` 全局限速配合使用）。
+库默认落在 `${ALPHASIFT_DATA_DIR}/daily_bars`（迁移期仍可用 `DAILY_BARS_DIR` 覆盖，不推荐）。
 
-**进度查看：** init 默认显示 **tqdm 单行进度条**（`ok/skip/fail/last`）；加 `--quiet` 可关闭。另开终端可运行 `alphasift daily-bars status --explain` 或查看 `${DAILY_BARS_DIR}/meta/sync_progress.json`。
+**进度查看：** init 默认显示 **tqdm 单行进度条**（`ok/skip/fail/last`）；加 `--quiet` 可关闭。另开终端可运行 `alphasift daily-bars status --explain` 或查看 `${ALPHASIFT_DATA_DIR}/daily_bars/meta/sync_progress.json`。
+
+### 2b. 本地资金流库（flow-bars）
+
+Tushare `moneyflow` 日频数据；主力口径为**大单 + 特大单净流入（万元）**。库路径固定为 `${ALPHASIFT_DATA_DIR}/flow_bars`。
+
+```bash
+export TUSHARE_TOKEN=your_token
+
+alphasift flow-bars init --lookback-days 800
+alphasift flow-bars sync
+alphasift flow-bars status --explain
+```
+
+含主力资金硬条件的策略示例（需 **flow-bars + daily-bars**；价涨量出 guard 依赖日 K）。前置条件不满足时，`screen` 会在开始前提示需执行的 init/sync 命令：
+
+```bash
+alphasift daily-bars sync   # 或 init，供 require_no_price_up_flow_out 计算背离
+alphasift flow-bars sync
+alphasift screen main_inflow_momentum --no-llm --explain
+```
+
+详见 [docs/plans/2026-07-05-flow-bars-migration.md](docs/plans/2026-07-05-flow-bars-migration.md)。
+
+### 2c. 板块主力流排行（board-flow）
+
+在 `flow-bars` + `industry_map.csv` 基础上，按**行业**和**概念**汇总近 5 日主力净流入（默认），并列出板块内个股 Top：
+
+```bash
+# 前置：flow-bars sync + industry-cache（见上文）
+
+# 行业 + 概念 Top（默认 5 日、各 Top 15 板块、每板块 Top 10 个股）
+alphasift board-flow rank --explain
+
+# 仅行业 / 仅概念
+alphasift board-flow rank --board-type industry --explain
+alphasift board-flow rank --board-type concept --explain
+
+# 查看单个板块内个股
+alphasift board-flow rank --board 半导体 --top-stocks 20 --explain
+
+# JSON 输出
+alphasift board-flow rank --json
+```
+
+完整说明见 [docs/board-flow-guide.md](docs/board-flow-guide.md)。
 
 ### 3. 全量日 K 硬筛选股
 

@@ -46,6 +46,11 @@ class HardFilterConfig:
     max_drawdown_20d_pct_max: float | None = None
     atr_20_pct_min: float | None = None
     atr_20_pct_max: float | None = None
+    main_inflow_streak_min: int | None = None
+    main_net_inflow_5d_min: float | None = None
+    main_net_inflow_min: float | None = None
+    main_net_inflow_rate_min: float | None = None
+    require_no_price_up_flow_out: bool = False
 
 
 @dataclass
@@ -202,6 +207,12 @@ class ScreenResult:
     daily_full_pool: bool = False
     daily_store_last_trade_date: str | None = None
     daily_effective_trade_date: str | None = None
+    flow_enriched: bool = False
+    flow_enrich_count: int = 0
+    flow_enrich_mode: str = ""
+    flow_full_pool: bool = False
+    flow_store_last_trade_date: str | None = None
+    flow_effective_trade_date: str | None = None
     risk_enabled: bool = True
     portfolio_diversity_enabled: bool = True
     portfolio_concentration_notes: list[str] = field(default_factory=list)
